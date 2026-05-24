@@ -88,11 +88,15 @@ alter table sessions      enable row level security;
 alter table games         enable row level security;
 alter table game_results  enable row level security;
 
-do $$
-begin
-  -- anon でも CRUD 可（身内限定URLを共有して使う前提）
-  for t in select unnest(array['players','rule_presets','sessions','games','game_results']) loop
-    execute format('drop policy if exists "allow_all_%I" on %I', t, t);
-    execute format('create policy "allow_all_%I" on %I for all using (true) with check (true)', t, t);
-  end loop;
-end $$;
+-- anon でも CRUD 可（身内限定URLを共有して使う前提）
+drop policy if exists "allow_all_players"      on players;
+drop policy if exists "allow_all_rule_presets" on rule_presets;
+drop policy if exists "allow_all_sessions"     on sessions;
+drop policy if exists "allow_all_games"        on games;
+drop policy if exists "allow_all_game_results" on game_results;
+
+create policy "allow_all_players"      on players      for all using (true) with check (true);
+create policy "allow_all_rule_presets" on rule_presets for all using (true) with check (true);
+create policy "allow_all_sessions"     on sessions     for all using (true) with check (true);
+create policy "allow_all_games"        on games        for all using (true) with check (true);
+create policy "allow_all_game_results" on game_results for all using (true) with check (true);
