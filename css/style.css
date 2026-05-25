@@ -30,13 +30,36 @@ header h1 { margin: 0; font-size: 18px; }
 .auth-form { max-width: 360px; margin: 0 auto; }
 .btn.full { width: 100%; }
 
-.cal-list { display: flex; flex-direction: column; gap: 10px; }
-.cal-card { background: #0f1620; border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
-.cal-card.confirmed { border-color: var(--primary); background: rgba(46, 160, 67, 0.08); }
-.cal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.cal-date { font-weight: 600; font-size: 16px; }
-.cal-players { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
 .confirmed-badge { background: var(--primary); color: white; }
+
+/* 月カレンダー */
+.cal-month-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.cal-month-label { font-size: 18px; font-weight: 600; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal-grid.cal-wk { margin-bottom: 4px; }
+.cal-cell {
+  background: #0f1620; border: 1px solid var(--border); border-radius: 6px;
+  min-height: 56px; padding: 4px; cursor: pointer; position: relative;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+  font-size: 14px;
+}
+.cal-cell.wk { min-height: 24px; cursor: default; color: var(--muted); font-size: 12px; padding: 4px 0; background: transparent; border: none; justify-content: center; }
+.cal-cell.empty { background: transparent; border: none; cursor: default; }
+.cal-cell.sun { color: #f87171; }
+.cal-cell.sat { color: #60a5fa; }
+.cal-cell.past { opacity: 0.45; }
+.cal-cell.today { border-color: var(--accent); border-width: 2px; }
+.cal-cell.joined { background: rgba(251, 191, 36, 0.18); border-color: var(--accent); }
+.cal-cell.confirmed { background: rgba(46, 160, 67, 0.22); border-color: var(--primary); }
+.cal-cell.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cal-cell .d-num { font-weight: 600; }
+.cal-cell .d-badge { font-size: 10px; padding: 1px 5px; border-radius: 8px; background: var(--border); margin-top: 2px; }
+.cal-cell .d-badge.confirmed-badge { background: var(--primary); }
+.cal-legend { margin-top: 10px; text-align: center; }
+
+.big-badge { display: inline-block; padding: 8px 16px; border-radius: 20px; font-weight: 600; background: var(--border); margin: 10px 0; }
+.name-list { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.name-list li { background: var(--border); padding: 4px 10px; border-radius: 12px; font-size: 13px; }
 
 .warn-box { background: rgba(251, 191, 36, 0.12); padding: 8px 10px; border-radius: 6px; color: var(--accent); }
 

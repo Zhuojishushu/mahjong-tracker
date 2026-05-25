@@ -8,7 +8,7 @@ const sb = createClient(window.MJ_CONFIG.SUPABASE_URL, window.MJ_CONFIG.SUPABASE
 const { hashPin, getCurrentPlayer, setCurrentPlayer, logout } = window.MJ_AUTH;
 
 // ---------- 状態 ----------
-const state = { rule: null, players: [] };
+const state = { rule: null, players: [], calMonth: null, calSelected: null };
 
 // ---------- ユーティリティ ----------
 const $ = (s) => document.querySelector(s);
@@ -265,66 +265,133 @@ async function renderHome() {
 }
 
 // ============================================================
-// 画面：カレンダー（参加申込）
+// 画面：カレンダー（月表示・参加申込）
 // ============================================================
 async function renderCalendar() {
   const me = getCurrentPlayer();
   const today = todayISO();
 
-  // 集計取得
-  const { data: summary } = await sb.from('v_availability_summary')
-    .select('*').gte('available_on', today).order('available_on');
-  // 確定セッション
-  const { data: sessions } = await sb.from('sessions')
-    .select('*').not('confirmed_at', 'is', null).gte('played_on', today);
-  const sessionByDate = Object.fromEntries((sessions || []).map(s => [s.played_on, s]));
+  // 表示月（初回は今月）
+  if (!state.calMonth) {
+    const t = new Date();
+    state.calMonth = { year: t.getFullYear(), month: t.getMonth() }; // month: 0-11
+  }
+  const { year, month } = state.calMonth;
+  const firstDay = new Date(year, month, 1);
+  const lastDay  = new Date(year, month + 1, 0);
+  const startISO = `${year}-${String(month+1).padStart(2,'0')}-01`;
+  const endISO   = `${year}-${String(month+1).padStart(2,'0')}-${String(lastDay.getDate()).padStart(2,'0')}`;
 
-  // 自分の申込
-  const { data: myAvail } = await sb.from('availability')
-    .select('available_on').eq('player_id', me.id).gte('available_on', today);
+  // 当月の集計・セッション・自分の申込
+  const [{ data: summary }, { data: sessions }, { data: myAvail }] = await Promise.all([
+    sb.from('v_availability_summary').select('*').gte('available_on', startISO).lte('available_on', endISO),
+    sb.from('sessions').select('*').gte('played_on', startISO).lte('played_on', endISO),
+    sb.from('availability').select('available_on').eq('player_id', me.id).gte('available_on', startISO).lte('available_on', endISO),
+  ]);
+  const summaryByDate = Object.fromEntries((summary || []).map(s => [s.available_on, s]));
+  const sessionByDate = Object.fromEntries((sessions || []).map(s => [s.played_on, s]));
   const mySet = new Set((myAvail || []).map(a => a.available_on));
 
-  const newSignup = h('div', { class: 'card' },
-    h('h3', {}, '➕ この日空いてる'),
-    h('p', { class: 'muted small' }, '空いている日を選んで「参加申込」を押すと、他のメンバーに表示されます。4人揃ったら自動で開催成立です。'),
-    h('form', { class: 'row', onsubmit: async (e) => {
-      e.preventDefault();
-      const date = e.target.date.value;
-      if (!date) return;
-      await signUp(date);
-    }},
-      h('input', { type: 'date', name: 'date', min: today, required: true }),
-      h('button', { class: 'btn primary', type: 'submit' }, '参加申込'),
-    ),
+  // カレンダー: 7列、月初の曜日から始めて末日まで
+  const cells = [];
+  const leading = firstDay.getDay(); // 0=Sun
+  for (let i = 0; i < leading; i++) cells.push(null);
+  for (let d = 1; d <= lastDay.getDate(); d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  // ヘッダー
+  const header = h('div', { class: 'cal-month-head' },
+    h('button', { class: 'btn small', onclick: () => { state.calMonth = { year: month === 0 ? year-1 : year, month: month === 0 ? 11 : month-1 }; state.calSelected = null; router(); } }, '◀'),
+    h('div', { class: 'cal-month-label' }, `${year}年${month+1}月`),
+    h('button', { class: 'btn small', onclick: () => { state.calMonth = { year: month === 11 ? year+1 : year, month: month === 11 ? 0 : month+1 }; state.calSelected = null; router(); } }, '▶'),
   );
 
-  const listCard = h('div', { class: 'card' },
-    h('h3', {}, `📅 参加申込状況 (${(summary || []).length}日)`),
-    (summary || []).length === 0
-      ? h('p', { class: 'muted' }, 'まだ誰も参加申込していません。上から自分の都合の良い日を申し込んでください')
-      : h('div', { class: 'cal-list' },
-          ...summary.map(s => renderDateCard(s, sessionByDate[s.available_on], mySet.has(s.available_on)))
-        ),
+  // 曜日見出し
+  const wkHead = h('div', { class: 'cal-grid cal-wk' },
+    ...['日','月','火','水','木','金','土'].map((d, i) =>
+      h('div', { class: `cal-cell wk ${i===0?'sun':''} ${i===6?'sat':''}` }, d))
   );
 
-  return h('div', {}, newSignup, listCard);
-
-  function renderDateCard(s, session, isJoined) {
-    const count = Number(s.signup_count);
-    const isConfirmed = count >= 4;
-    return h('div', { class: `cal-card ${isConfirmed ? 'confirmed' : ''}` },
-      h('div', { class: 'cal-head' },
-        h('div', { class: 'cal-date' }, fmtDate(s.available_on)),
+  // 日付セル
+  const grid = h('div', { class: 'cal-grid' },
+    ...cells.map((d, idx) => {
+      if (d === null) return h('div', { class: 'cal-cell empty' });
+      const iso = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const sum = summaryByDate[iso];
+      const cnt = sum ? Number(sum.signup_count) : 0;
+      const isPast = iso < today;
+      const isToday = iso === today;
+      const isJoined = mySet.has(iso);
+      const isConfirmed = cnt >= 4;
+      const dow = idx % 7;
+      const classes = [
+        'cal-cell',
+        isPast && 'past',
+        isToday && 'today',
+        isJoined && 'joined',
+        isConfirmed && 'confirmed',
+        state.calSelected === iso && 'selected',
+        dow === 0 && 'sun',
+        dow === 6 && 'sat',
+      ].filter(Boolean).join(' ');
+      return h('div', { class: classes, onclick: () => { state.calSelected = iso; router(); } },
+        h('div', { class: 'd-num' }, d),
         isConfirmed
-          ? h('span', { class: 'badge confirmed-badge' }, '🎉 成立')
-          : h('span', { class: 'badge' }, `${count}/4`),
-      ),
-      h('div', { class: 'cal-players' }, (s.player_names || []).join('・')),
+          ? h('div', { class: 'd-badge confirmed-badge' }, '🎉')
+          : cnt > 0 ? h('div', { class: 'd-badge' }, `${cnt}/4`) : null,
+      );
+    })
+  );
+
+  // 詳細パネル
+  const detail = renderDetailPanel();
+
+  return h('div', {},
+    h('div', { class: 'card' },
+      header,
+      wkHead,
+      grid,
+      h('div', { class: 'cal-legend muted small' },
+        '🟡 自分が申込済み　🟢 4人成立　数字 = 申込人数/4'),
+    ),
+    detail,
+  );
+
+  function renderDetailPanel() {
+    if (!state.calSelected) {
+      return h('div', { class: 'card muted' }, '👆 日付をタップすると詳細が表示されます');
+    }
+    const iso = state.calSelected;
+    const sum = summaryByDate[iso];
+    const session = sessionByDate[iso];
+    const cnt = sum ? Number(sum.signup_count) : 0;
+    const isPast = iso < today;
+    const isJoined = mySet.has(iso);
+    const isConfirmed = cnt >= 4;
+    const names = sum?.player_names || [];
+
+    return h('div', { class: 'card' },
+      h('h3', {}, `📅 ${fmtDate(iso)}`),
+      isConfirmed
+        ? h('div', { class: 'big-badge confirmed-badge' }, '🎉 開催成立')
+        : h('div', { class: 'big-badge' }, `${cnt} / 4 人`),
+
+      cnt === 0
+        ? h('p', { class: 'muted' }, 'まだ誰も申込していません')
+        : h('div', {},
+            h('div', { class: 'muted small' }, '参加申込者:'),
+            h('ul', { class: 'name-list' },
+              ...names.map(n => h('li', {}, n === me.name ? `${n} (あなた)` : n))
+            ),
+          ),
+
       h('div', { class: 'btn-row' },
-        isJoined
-          ? h('button', { class: 'btn danger small', onclick: () => cancelSignUp(s.available_on) }, '申込取消')
-          : !isConfirmed && h('button', { class: 'btn primary small', onclick: () => signUp(s.available_on) }, '自分も参加'),
-        isConfirmed && session && h('a', { class: 'btn small', href: `#session/${session.id}` }, '→ 試合記録へ'),
+        isPast
+          ? h('span', { class: 'muted small' }, '過去日のため申込不可')
+          : isJoined
+            ? h('button', { class: 'btn danger', onclick: () => cancelSignUp(iso) }, '✖ 申込取消')
+            : !isConfirmed && h('button', { class: 'btn primary', onclick: () => signUp(iso) }, '✋ 自分も参加'),
+        isConfirmed && session && h('a', { class: 'btn primary', href: `#session/${session.id}` }, '→ 試合記録へ'),
       ),
     );
   }
@@ -336,15 +403,12 @@ async function renderCalendar() {
       else toast(error.message, true);
       return;
     }
-    // 4人になったらセッション自動生成
     const { count } = await sb.from('availability').select('*', { count: 'exact', head: true }).eq('available_on', date);
     if (count === 4) {
       const { data: existing } = await sb.from('sessions').select('id').eq('played_on', date).maybeSingle();
       if (!existing) {
         await sb.from('sessions').insert({
-          played_on: date,
-          rule_id: state.rule.id,
-          confirmed_at: new Date().toISOString(),
+          played_on: date, rule_id: state.rule.id, confirmed_at: new Date().toISOString(),
         });
         toast(`🎉 ${fmtDate(date)} 開催成立！`);
       }
