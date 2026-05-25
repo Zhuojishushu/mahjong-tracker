@@ -200,7 +200,7 @@ function renderRegisterForm() {
     h('p', { class: 'muted small' }, '初めての方はここから登録してください。PINは次回ログインに必要です（忘れないように）。'),
     h('label', { class: 'field' },
       h('span', {}, '名前（仲間内で識別できる名前）'),
-      h('input', { name: 'name', required: true, maxlength: '20', placeholder: '例: テンマ' }),
+      h('input', { name: 'name', required: true, maxlength: '20', placeholder: '例: 山田' }),
     ),
     h('label', { class: 'field' },
       h('span', {}, '4桁PIN（数字のみ）'),
@@ -823,7 +823,62 @@ async function renderRankings() {
 // ============================================================
 async function renderSettings() {
   const r = state.rule;
-  return h('div', { class: 'card' },
+  const me = getCurrentPlayer();
+
+  // 自分のプロフィール変更カード
+  const profileCard = h('div', { class: 'card' },
+    h('h3', {}, '👤 自分のプロフィール'),
+    h('form', { class: 'rule-form', onsubmit: async (e) => {
+      e.preventDefault();
+      const f = e.target;
+      const newName = f.name.value.trim();
+      const newPin  = f.pin.value;
+      const newPin2 = f.pin2.value;
+      if (!newName) return toast('名前を入力してください', true);
+
+      const upd = {};
+      if (newName !== me.name) {
+        // 重複チェック
+        const dup = state.players.find(p => p.name === newName && p.id !== me.id);
+        if (dup) return toast('同じ名前が既に登録されています', true);
+        upd.name = newName;
+      }
+      if (newPin || newPin2) {
+        if (!/^\d{4}$/.test(newPin)) return toast('PINは4桁の数字です', true);
+        if (newPin !== newPin2) return toast('PINが一致しません', true);
+        upd.pin_hash = await window.MJ_AUTH.hashPin(newPin);
+      }
+      if (Object.keys(upd).length === 0) return toast('変更がありません', true);
+
+      const { error } = await sb.from('players').update(upd).eq('id', me.id);
+      if (error) return toast(error.message, true);
+
+      // ローカルのログイン情報も更新
+      if (upd.name) window.MJ_AUTH.setCurrentPlayer({ id: me.id, name: upd.name });
+      toast('更新しました');
+      await loadPlayers();
+      router();
+    }},
+      h('label', { class: 'field' },
+        h('span', {}, '名前'),
+        h('input', { name: 'name', value: me.name, required: true, maxlength: '20' }),
+      ),
+      h('p', { class: 'muted small' }, '※ PIN変更したいときだけ下を入力。空のままなら現在のPINが維持されます'),
+      h('label', { class: 'field' },
+        h('span', {}, '新しいPIN（4桁）'),
+        h('input', { type: 'password', name: 'pin', inputmode: 'numeric', pattern: '\\d{4}', maxlength: '4', placeholder: '****（変更しない場合は空欄）' }),
+      ),
+      h('label', { class: 'field' },
+        h('span', {}, '新しいPIN（確認）'),
+        h('input', { type: 'password', name: 'pin2', inputmode: 'numeric', pattern: '\\d{4}', maxlength: '4', placeholder: '****（変更しない場合は空欄）' }),
+      ),
+      h('div', { class: 'btn-row' },
+        h('button', { class: 'btn primary', type: 'submit' }, '💾 プロフィール更新'),
+      ),
+    ),
+  );
+
+  const ruleCard = h('div', { class: 'card' },
     h('h3', {}, '⚙️ ルール設定'),
     h('p', { class: 'muted small' }, '変更すると今後の試合に適用されます。'),
     h('form', { class: 'rule-form', onsubmit: async (e) => {
@@ -851,6 +906,8 @@ async function renderSettings() {
       ),
     ),
   );
+
+  return h('div', {}, profileCard, ruleCard);
 }
 function labelInput(label, name, value) {
   return h('label', { class: 'field' },
