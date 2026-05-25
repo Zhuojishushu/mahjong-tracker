@@ -32,8 +32,8 @@ create or replace view v_availability_summary as
 select
   available_on,
   count(*) as signup_count,
-  array_agg(player_id order by created_at) as player_ids,
-  array_agg(p.name order by a.created_at) as player_names,
+  array_agg(a.player_id order by a.created_at) as player_ids,
+  array_agg(p.name      order by a.created_at) as player_names,
   min(a.created_at) as first_signup_at
 from availability a
 join players p on p.id = a.player_id
