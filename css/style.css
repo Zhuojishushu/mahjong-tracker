@@ -18,7 +18,27 @@ a:hover { text-decoration: underline; }
 
 .container { max-width: 800px; margin: 0 auto; padding: 12px; padding-bottom: 80px; }
 header { padding: 14px 16px; border-bottom: 1px solid var(--border); }
-header h1 { margin: 0; font-size: 20px; }
+header h1 { margin: 0; font-size: 18px; }
+.header-bar { display: flex; justify-content: space-between; align-items: center; padding: 0; }
+#header-right { display: flex; align-items: center; gap: 8px; }
+.me { font-size: 13px; color: var(--accent); }
+
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
+.tab { background: transparent; color: var(--muted); border: none; padding: 10px 16px; cursor: pointer; font-size: 14px; border-bottom: 2px solid transparent; }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+.auth-form { max-width: 360px; margin: 0 auto; }
+.btn.full { width: 100%; }
+
+.cal-list { display: flex; flex-direction: column; gap: 10px; }
+.cal-card { background: #0f1620; border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+.cal-card.confirmed { border-color: var(--primary); background: rgba(46, 160, 67, 0.08); }
+.cal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.cal-date { font-weight: 600; font-size: 16px; }
+.cal-players { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+.confirmed-badge { background: var(--primary); color: white; }
+
+.warn-box { background: rgba(251, 191, 36, 0.12); padding: 8px 10px; border-radius: 6px; color: var(--accent); }
 
 .nav {
   position: fixed; bottom: 0; left: 0; right: 0;
