@@ -503,13 +503,89 @@ async function renderSessionDetail(sessionId) {
   })).sort((a, b) => b.points - a.points);
 
   const rule = state.rule;
+
+  // Daily チップ取得
+  const { data: chips } = await sb.from('daily_chips').select('*').eq('session_id', sessionId);
+  const chipMap = Object.fromEntries((chips || []).map(c => [c.player_id, c.chip_net]));
+
   const settlements = summary.map(s => {
     const pointYen = s.points * rule.yen_per_1000pt;
-    return { ...s, totalYen: pointYen - s.yakitori * 3 * rule.yakitori_yen };
+    const chipNet  = chipMap[s.player_id] || 0;
+    const chipYen  = chipNet * rule.chip_yen;
+    return { ...s, chipNet, chipYen, totalYen: pointYen + chipYen };
   });
-  const totalYakitoriChips = summary.reduce((sum, s) => sum + s.yakitori, 0);
-  for (const s of settlements) {
-    s.totalYen += (totalYakitoriChips - s.yakitori) * rule.yakitori_yen;
+
+  // チップ入力UI
+  function renderChipInput() {
+    const playersInOrder = summary.map(s => ({ id: s.player_id, name: s.name }));
+    const card = h('div', { class: 'card' },
+      h('h3', {}, '🎫 Daily チップ精算'),
+      h('p', { class: 'muted small' }, '最終局終了時の各自のチップ増減（初期からの差）を入力。プラス=もらった、マイナス=払った。合計が0になるはずです。'),
+    );
+    const tbl = h('table', { class: 'chip-input' },
+      h('thead', {}, h('tr', {},
+        h('th', {}, '名前'),
+        h('th', { class: 'num' }, 'チップ増減'),
+        h('th', { class: 'num' }, '円換算'),
+      )),
+    );
+    const tbody = h('tbody', {});
+    const inputs = {};
+    for (const p of playersInOrder) {
+      const cur = chipMap[p.id] || 0;
+      const input = h('input', {
+        type: 'number', value: cur, step: 1, inputmode: 'numeric',
+        'data-pid': p.id, class: 'chip-num',
+      });
+      inputs[p.id] = input;
+      const yenSpan = h('span', {}, yen(cur * rule.chip_yen));
+      input.addEventListener('input', () => {
+        const v = parseInt(input.value, 10) || 0;
+        yenSpan.textContent = yen(v * rule.chip_yen);
+        updateSum();
+      });
+      tbody.append(h('tr', {},
+        h('td', {}, p.name),
+        h('td', { class: 'num' }, input),
+        h('td', { class: `num ${cur > 0 ? 'pos' : (cur < 0 ? 'neg' : '')}` }, yenSpan),
+      ));
+    }
+    tbl.append(tbody);
+    card.append(tbl);
+
+    const sumLine = h('div', { class: 'sum-display' }, '合計: 0');
+    function updateSum() {
+      let sum = 0;
+      for (const pid in inputs) sum += parseInt(inputs[pid].value, 10) || 0;
+      sumLine.textContent = `合計: ${sum > 0 ? '+' : ''}${sum}`;
+      sumLine.className = `sum-display ${sum === 0 ? 'ok' : 'warn'}`;
+    }
+    updateSum();
+    card.append(sumLine);
+
+    card.append(h('div', { class: 'btn-row' },
+      h('button', {
+        class: 'btn primary', disabled: session.closed,
+        onclick: async () => {
+          let sum = 0;
+          const rows = [];
+          for (const pid in inputs) {
+            const v = parseInt(inputs[pid].value, 10) || 0;
+            sum += v;
+            rows.push({ session_id: sessionId, player_id: pid, chip_net: v, updated_at: new Date().toISOString() });
+          }
+          if (sum !== 0) {
+            if (!confirm(`チップ増減の合計が ${sum} で、0になっていません。\nこのまま保存しますか？`)) return;
+          }
+          const { error } = await sb.from('daily_chips').upsert(rows, { onConflict: 'session_id,player_id' });
+          if (error) return toast(error.message, true);
+          toast('チップ精算を保存しました');
+          router();
+        }
+      }, '💾 チップを保存'),
+    ));
+
+    return card;
   }
 
   return h('div', {},
@@ -547,7 +623,8 @@ async function renderSessionDetail(sessionId) {
               h('th', { class: 'num' }, '半荘'),
               h('th', { class: 'num' }, 'pt合計'),
               h('th', { class: 'num' }, '1/2/3/4着'),
-              h('th', { class: 'num' }, '🐔'), h('th', { class: 'num' }, 'トビ'),
+              h('th', { class: 'num' }, 'トビ'),
+              h('th', { class: 'num' }, 'チップ'),
               h('th', { class: 'num' }, '精算額'),
             )),
             h('tbody', {}, ...settlements.map((s, i) => {
@@ -557,14 +634,17 @@ async function renderSessionDetail(sessionId) {
                 h('td', { class: 'num' }, s.games),
                 h('td', { class: `num ${s.points >= 0 ? 'pos' : 'neg'}` }, fmt(s.points)),
                 h('td', { class: 'num small' }, rc),
-                h('td', { class: 'num' }, s.yakitori || ''),
                 h('td', { class: 'num' }, s.tobi || ''),
+                h('td', { class: `num ${s.chipNet > 0 ? 'pos' : (s.chipNet < 0 ? 'neg' : '')}` }, s.chipNet ? (s.chipNet > 0 ? `+${s.chipNet}` : s.chipNet) : '0'),
                 h('td', { class: `num ${s.totalYen >= 0 ? 'pos' : 'neg'}` }, yen(s.totalYen)),
               );
             })),
           )),
-      h('p', { class: 'muted small' }, `レート: 1,000点 = ${rule.yen_per_1000pt}円 / 焼き鳥1枚 = ${rule.yakitori_yen}円`),
+      h('p', { class: 'muted small' }, `レート: 1,000点 = ${rule.yen_per_1000pt}円 / チップ1枚 = ${rule.chip_yen}円`),
     ),
+
+    // チップ精算入力（参加者が4人いて、ゲームが1つでも記録されている場合）
+    summary.length > 0 && participantIds.has(me.id) && renderChipInput(),
 
     h('div', { class: 'card' },
       h('h3', {}, `🀄 半荘記録 (${games.length})`),
@@ -590,7 +670,7 @@ async function renderSessionDetail(sessionId) {
                     h('td', {}, playerMap[r.player_id]?.name || '(?)'),
                     h('td', { class: 'num' }, r.raw_score.toLocaleString()),
                     h('td', { class: `num ${Number(r.final_points) >= 0 ? 'pos' : 'neg'}` }, fmt(r.final_points)),
-                    h('td', { class: 'num small' }, [r.tobi && '💥', r.yakitori && '🐔'].filter(Boolean).join('')),
+                    h('td', { class: 'num small' }, r.tobi ? '💥' : ''),
                   ))),
                 ),
               );
@@ -636,8 +716,7 @@ async function renderNewGame(sessionId) {
         ),
       ),
       h('input', { type: 'number', name: `score_${i}`, placeholder: '素点', step: 100, inputmode: 'numeric' }),
-      h('label', { class: 'check' }, h('input', { type: 'checkbox', name: `tobi_${i}` }), '💥'),
-      h('label', { class: 'check' }, h('input', { type: 'checkbox', name: `yakitori_${i}` }), '🐔'),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', name: `tobi_${i}` }), '💥トビ'),
     ));
   }
 
@@ -670,7 +749,7 @@ async function renderNewGame(sessionId) {
           inputs.push({
             player_id: pid, raw_score: score,
             tobi: form.querySelector(`[name=tobi_${i}]`).checked,
-            yakitori: form.querySelector(`[name=yakitori_${i}]`).checked,
+            yakitori: false,
           });
         }
         const sum = inputs.reduce((a, b) => a + b.raw_score, 0);
@@ -722,7 +801,7 @@ async function renderRankings() {
             h('th', { class: 'num' }, '半荘'), h('th', { class: 'num' }, '通算pt'),
             h('th', { class: 'num' }, '平均pt'), h('th', { class: 'num' }, '平均順位'),
             h('th', { class: 'num' }, 'トップ率'), h('th', { class: 'num' }, 'ラス率'),
-            h('th', { class: 'num' }, '🐔'), h('th', { class: 'num' }, '💥'),
+            h('th', { class: 'num' }, 'トビ'),
           )),
           h('tbody', {}, ...sorted.map((d, i) => h('tr', {},
             h('td', {}, h('strong', {}, i + 1)),
@@ -733,7 +812,6 @@ async function renderRankings() {
             h('td', { class: 'num' }, Number(d.avg_rank).toFixed(2)),
             h('td', { class: 'num' }, `${(d.first_count / d.games_played * 100).toFixed(1)}%`),
             h('td', { class: 'num' }, `${(d.fourth_count / d.games_played * 100).toFixed(1)}%`),
-            h('td', { class: 'num' }, d.yakitori_count || ''),
             h('td', { class: 'num' }, d.tobi_count || ''),
           ))),
         )),
@@ -754,7 +832,7 @@ async function renderSettings() {
       const upd = {
         starting_points: +f.starting_points.value, return_points: +f.return_points.value,
         uma_1st: +f.uma_1st.value, uma_2nd: +f.uma_2nd.value,
-        yen_per_1000pt: +f.yen_per_1000pt.value, yakitori_yen: +f.yakitori_yen.value,
+        yen_per_1000pt: +f.yen_per_1000pt.value, chip_yen: +f.chip_yen.value,
       };
       const { error } = await sb.from('rule_presets').update(upd).eq('id', r.id);
       if (error) return toast(error.message, true);
@@ -767,7 +845,7 @@ async function renderSettings() {
       labelInput('1着ウマ', 'uma_1st', r.uma_1st),
       labelInput('2着ウマ', 'uma_2nd', r.uma_2nd),
       labelInput('1,000点あたりの円（レート）', 'yen_per_1000pt', r.yen_per_1000pt),
-      labelInput('焼き鳥1枚（円）', 'yakitori_yen', r.yakitori_yen),
+      labelInput('チップ1枚（円）', 'chip_yen', r.chip_yen),
       h('div', { class: 'btn-row' },
         h('button', { class: 'btn primary', type: 'submit' }, '💾 保存'),
       ),

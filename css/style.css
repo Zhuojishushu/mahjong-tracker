@@ -61,6 +61,10 @@ header h1 { margin: 0; font-size: 18px; }
 .name-list { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .name-list li { background: var(--border); padding: 4px 10px; border-radius: 12px; font-size: 13px; }
 
+.chip-input { width: 100%; }
+.chip-input td, .chip-input th { padding: 6px; }
+.chip-num { width: 80px; text-align: right; }
+
 .warn-box { background: rgba(251, 191, 36, 0.12); padding: 8px 10px; border-radius: 6px; color: var(--accent); }
 
 .nav {
