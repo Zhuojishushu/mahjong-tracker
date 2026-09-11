@@ -160,3 +160,29 @@ table.mini td { padding: 4px 6px; }
   .game-input-row { grid-template-columns: 1fr 1fr; }
   .check { justify-content: center; }
 }
+
+/* 半荘入力（v3：トップ選択＋2〜4位の申告） */
+.gi-head { margin: 16px 0 6px; }
+.gi-list { display: flex; flex-direction: column; gap: 8px; }
+.gi-row {
+  display: grid;
+  grid-template-columns: 2.6rem minmax(0, 1fr) 5rem auto auto;
+  align-items: center; gap: 8px;
+}
+.gi-rank { font-size: 13px; font-weight: 600; color: var(--accent); }
+.gi-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gi-pt { text-align: right; }
+.gi-row .btn.small { padding: 6px 10px; }
+.gi-row .btn.small:disabled { opacity: .3; }
+
+.pv { margin-top: 18px; }
+.pv-table { width: 100%; }
+.pv-table thead th { font-size: 12px; color: var(--muted); font-weight: 500; padding: 4px 6px; text-align: left; }
+.pv-table thead th.num { text-align: right; }
+.pv-table td.num { text-align: right; }
+tr.pv-top td { background: rgba(46, 160, 67, 0.12); }
+
+@media (max-width: 480px) {
+  .gi-row { grid-template-columns: 2.4rem minmax(0, 1fr) 4.2rem auto auto; gap: 6px; }
+  .gi-row .check { font-size: 12px; }
+}

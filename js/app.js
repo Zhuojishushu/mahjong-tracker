@@ -32,26 +32,47 @@ const toast = (msg, isError = false) => {
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 2400);
 };
-const dayJa = (d) => ['日','月','火','水','木','金','土'][new Date(d).getDay()];
+const parseISO = (d) => {
+  const [y, m, dd] = String(d).slice(0, 10).split('-').map(Number);
+  return new Date(y, m - 1, dd);
+};
+const dayJa = (d) => ['日','月','火','水','木','金','土'][parseISO(d).getDay()];
 const fmtDate = (d) => {
-  const dt = new Date(d);
+  const dt = parseISO(d);
   return `${dt.getMonth()+1}月${dt.getDate()}日(${dayJa(d)})`;
 };
-const todayISO = () => new Date().toISOString().slice(0, 10);
+// 「今日」は日本時間で判定する（UTC基準だとJST午前9時まで前日扱いになってしまう）
+const todayISO = () => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+// ptの表示（整数はそのまま、端数があるときだけ小数第1位まで）
+const ptFmt = (n) => {
+  const v = Math.round(Number(n) * 10) / 10;
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
+};
+const signed = (n) => (Number(n) > 0 ? `+${ptFmt(n)}` : ptFmt(n));
 
 // ---------- スコア計算 ----------
-function calcResults(rawScores, rule) {
-  const oka = (rule.return_points - rule.starting_points) * 4 / 1000;
+// 2〜4位が申告した±（五捨六入後）から、トップの点数を逆算する。
+// 4人の点数の合計は必ず0になり、トップの点数にはオカが自動的に含まれる。
+// rows は 2位 → 4位 の順に並んでいること。
+function buildResults(topId, rows, rule) {
   const umaList = [rule.uma_1st, rule.uma_2nd, -rule.uma_2nd, -rule.uma_1st];
-  const indexed = rawScores.map((r, i) => ({ ...r, _idx: i }));
-  indexed.sort((a, b) => b.raw_score - a.raw_score || a._idx - b._idx);
-  return indexed.map((r, i) => {
-    const rank = i + 1;
-    const base = (r.raw_score - rule.return_points) / 1000;
-    const uma  = umaList[i];
-    const okaPt = rank === 1 ? oka : 0;
-    return { ...r, rank, final_points: Math.round((base + uma + okaPt) * 10) / 10 };
-  });
+  const topPt = -rows.reduce((sum, r) => sum + r.pt, 0);
+  return [
+    { player_id: topId, base_pt: topPt, rank: 1, tobi: false, final_points: topPt + umaList[0] },
+    ...rows.map((r, i) => ({
+      player_id: r.id,
+      base_pt: r.pt,
+      rank: i + 2,
+      tobi: !!r.tobi,
+      final_points: r.pt + umaList[i + 1],
+    })),
+  ];
+}
+// 申告値の降順で2〜4位を並べる（同値のときは現在の並び順を維持＝▲での入れ替えが効く）
+function orderRows(rows) {
+  return rows.map((r, i) => ({ r, i }))
+    .sort((a, b) => b.r.pt - a.r.pt || a.i - b.i)
+    .map((x) => x.r);
 }
 
 // ---------- データロード ----------
@@ -511,7 +532,7 @@ async function renderSessionDetail(sessionId) {
   const settlements = summary.map(s => {
     const pointYen = s.points * rule.yen_per_1000pt;
     const chipNet  = chipMap[s.player_id] || 0;
-    const chipYen  = chipNet * rule.chip_yen;
+    const chipYen  = chipNet * rule.ippatsu_pt * rule.yen_per_1000pt;
     return { ...s, chipNet, chipYen, totalYen: pointYen + chipYen };
   });
 
@@ -519,8 +540,8 @@ async function renderSessionDetail(sessionId) {
   function renderChipInput() {
     const playersInOrder = summary.map(s => ({ id: s.player_id, name: s.name }));
     const card = h('div', { class: 'card' },
-      h('h3', {}, '🎫 Daily チップ精算'),
-      h('p', { class: 'muted small' }, '最終局終了時の各自のチップ増減（初期からの差）を入力。プラス=もらった、マイナス=払った。合計が0になるはずです。'),
+      h('h3', {}, '🎫 一発賞（チップ）精算'),
+      h('p', { class: 'muted small' }, `最終局終了時の各自のチップ増減を入力。プラス=もらった、マイナス=払った。1枚 = ${rule.ippatsu_pt}pt（${rule.ippatsu_pt * rule.yen_per_1000pt}円）。合計が0になるはずです。`),
     );
     const tbl = h('table', { class: 'chip-input' },
       h('thead', {}, h('tr', {},
@@ -538,10 +559,11 @@ async function renderSessionDetail(sessionId) {
         'data-pid': p.id, class: 'chip-num',
       });
       inputs[p.id] = input;
-      const yenSpan = h('span', {}, yen(cur * rule.chip_yen));
+      const chipYenOf = (v) => v * rule.ippatsu_pt * rule.yen_per_1000pt;
+      const yenSpan = h('span', {}, yen(chipYenOf(cur)));
       input.addEventListener('input', () => {
         const v = parseInt(input.value, 10) || 0;
-        yenSpan.textContent = yen(v * rule.chip_yen);
+        yenSpan.textContent = yen(chipYenOf(v));
         updateSum();
       });
       tbody.append(h('tr', {},
@@ -632,7 +654,7 @@ async function renderSessionDetail(sessionId) {
               return h('tr', {},
                 h('td', {}, i+1), h('td', {}, s.name),
                 h('td', { class: 'num' }, s.games),
-                h('td', { class: `num ${s.points >= 0 ? 'pos' : 'neg'}` }, fmt(s.points)),
+                h('td', { class: `num ${s.points >= 0 ? 'pos' : 'neg'}` }, ptFmt(s.points)),
                 h('td', { class: 'num small' }, rc),
                 h('td', { class: 'num' }, s.tobi || ''),
                 h('td', { class: `num ${s.chipNet > 0 ? 'pos' : (s.chipNet < 0 ? 'neg' : '')}` }, s.chipNet ? (s.chipNet > 0 ? `+${s.chipNet}` : s.chipNet) : '0'),
@@ -640,7 +662,7 @@ async function renderSessionDetail(sessionId) {
               );
             })),
           )),
-      h('p', { class: 'muted small' }, `レート: 1,000点 = ${rule.yen_per_1000pt}円 / チップ1枚 = ${rule.chip_yen}円`),
+      h('p', { class: 'muted small' }, `レート: 1,000点 = ${rule.yen_per_1000pt}円 / 一発賞1枚 = ${rule.ippatsu_pt}pt（${rule.ippatsu_pt * rule.yen_per_1000pt}円）`),
     ),
 
     // チップ精算入力（参加者が4人いて、ゲームが1つでも記録されている場合）
@@ -668,8 +690,8 @@ async function renderSessionDetail(sessionId) {
                   h('tbody', {}, ...grs.map(r => h('tr', {},
                     h('td', {}, `${r.rank}位`),
                     h('td', {}, playerMap[r.player_id]?.name || '(?)'),
-                    h('td', { class: 'num' }, r.raw_score.toLocaleString()),
-                    h('td', { class: `num ${Number(r.final_points) >= 0 ? 'pos' : 'neg'}` }, fmt(r.final_points)),
+                    h('td', { class: 'num' }, r.base_pt == null ? '' : signed(r.base_pt)),
+                    h('td', { class: `num ${Number(r.final_points) >= 0 ? 'pos' : 'neg'}` }, ptFmt(r.final_points)),
                     h('td', { class: 'num small' }, r.tobi ? '💥' : ''),
                   ))),
                 ),
@@ -699,89 +721,155 @@ async function renderNewGame(sessionId) {
 
   const { data: games } = await sb.from('games').select('id').eq('session_id', sessionId);
   const nextNo = (games?.length || 0) + 1;
+  const rule = state.rule;
+  const umaList = [rule.uma_1st, rule.uma_2nd, -rule.uma_2nd, -rule.uma_1st];
+  const nameOf = Object.fromEntries(participants.map(p => [p.id, p.name]));
 
-  const form = h('div', { class: 'card' },
-    h('h3', {}, `🀄 第${nextNo}半荘を記録（${fmtDate(session.played_on)}）`),
-    h('p', { class: 'muted small' }, '4人を選んで素点（終局時の持ち点）を入力。順位は自動計算されます。'),
-  );
+  // 入力状態：トップ1人と、残り3人の申告値。rows の並び順が同値のときの着順になる
+  const st = { topId: participants[0].id, rows: [] };
+  const resetRows = () => {
+    st.rows = participants
+      .filter(p => p.id !== st.topId)
+      .map(p => ({ id: p.id, name: p.name, pt: null, tobi: false }));
+  };
+  resetRows();
 
-  // デフォルトでこの日の参加者4人を埋める
-  const defaultOrder = participants.slice(0, 4);
-  for (let i = 0; i < 4; i++) {
-    form.append(h('div', { class: 'game-input-row' },
-      h('select', { name: `player_${i}` },
-        h('option', { value: '' }, '-- 選択 --'),
-        ...participants.map(p =>
-          h('option', { value: p.id, selected: defaultOrder[i]?.id === p.id }, p.name)
-        ),
+  const rowsBox = h('div', { class: 'gi-list' });
+  const preview = h('div', { class: 'pv' });
+  let rowRefs = [];
+
+  const isReady = () => st.rows.length === 3 && st.rows.every(r => Number.isFinite(r.pt));
+
+  function updateView() {
+    // 各行の着順バッジ
+    if (isReady()) {
+      const ordered = orderRows(st.rows);
+      rowRefs.forEach(ref => { ref.rankEl.textContent = `${ordered.indexOf(ref.row) + 2}位`; });
+    } else {
+      rowRefs.forEach(ref => { ref.rankEl.textContent = '–'; });
+    }
+
+    // 集計プレビュー
+    preview.innerHTML = '';
+    if (!isReady()) {
+      preview.append(h('p', { class: 'muted small' },
+        '3人分の±を入力すると、トップの点数と全員の最終ptが表示されます'));
+      return;
+    }
+    const results = buildResults(st.topId, orderRows(st.rows), rule);
+    const total = results.reduce((sum, r) => sum + r.final_points, 0);
+
+    preview.append(
+      h('table', { class: 'mini pv-table' },
+        h('thead', {}, h('tr', {},
+          h('th', {}, '着順'), h('th', {}, '名前'),
+          h('th', { class: 'num' }, '点数'), h('th', { class: 'num' }, 'ウマ'),
+          h('th', { class: 'num' }, '最終pt'), h('th', {}, ''),
+        )),
+        h('tbody', {}, ...results.map((r, i) => h('tr', { class: i === 0 ? 'pv-top' : false },
+          h('td', {}, `${r.rank}位`),
+          h('td', {}, nameOf[r.player_id]),
+          h('td', { class: `num ${r.base_pt >= 0 ? 'pos' : 'neg'}` }, signed(r.base_pt)),
+          h('td', { class: 'num' }, signed(umaList[i])),
+          h('td', { class: `num ${r.final_points >= 0 ? 'pos' : 'neg'}` }, signed(r.final_points)),
+          h('td', {}, r.tobi ? '💥' : ''),
+        ))),
       ),
-      h('input', { type: 'number', name: `score_${i}`, placeholder: '素点', step: 100, inputmode: 'numeric' }),
-      h('label', { class: 'check' }, h('input', { type: 'checkbox', name: `tobi_${i}` }), '💥トビ'),
-    ));
+      h('div', { class: `sum-display ${total === 0 ? 'ok' : 'warn'}` }, `合計: ${ptFmt(total)}`),
+    );
+
+    if (new Set(st.rows.map(r => r.pt)).size < 3) {
+      preview.append(h('p', { class: 'muted small' },
+        '※ 同じ点数の人がいます。着順が違う場合は ▲ で入れ替えてください'));
+    }
   }
 
-  const sumDisplay = h('div', { class: 'sum-display muted' }, '合計: -');
-  form.append(sumDisplay);
+  function renderRows() {
+    rowsBox.innerHTML = '';
+    rowRefs = [];
+    st.rows.forEach((r, i) => {
+      const rankEl = h('span', { class: 'gi-rank' }, '–');
+      const input = h('input', {
+        type: 'number', step: 1, inputmode: 'numeric', class: 'gi-pt',
+        placeholder: '±', value: r.pt === null ? '' : r.pt,
+      });
+      input.addEventListener('input', () => {
+        const v = input.value.trim();
+        r.pt = v === '' ? null : parseInt(v, 10);
+        if (!Number.isFinite(r.pt)) r.pt = null;
+        updateView();
+      });
+      const tobiBox = h('input', { type: 'checkbox', checked: r.tobi });
+      tobiBox.addEventListener('change', () => { r.tobi = tobiBox.checked; updateView(); });
 
-  const expectedSum = state.rule.starting_points * 4;
-  form.addEventListener('input', () => {
-    let sum = 0;
-    for (let i = 0; i < 4; i++) {
-      const v = parseInt(form.querySelector(`[name=score_${i}]`).value, 10);
-      if (!isNaN(v)) sum += v;
-    }
-    sumDisplay.textContent = `合計: ${sum.toLocaleString()} / ${expectedSum.toLocaleString()}（差 ${(sum - expectedSum).toLocaleString()}）`;
-    sumDisplay.className = sum === expectedSum ? 'sum-display ok' : 'sum-display warn';
+      rowsBox.append(h('div', { class: 'gi-row' },
+        rankEl,
+        h('span', { class: 'gi-name' }, r.name),
+        input,
+        h('label', { class: 'check' }, tobiBox, '💥ハコ'),
+        h('button', {
+          class: 'btn small', type: 'button', disabled: i === 0,
+          title: '一つ上と入れ替える（同点のときの着順調整用）',
+          onclick: () => {
+            const t = st.rows[i - 1]; st.rows[i - 1] = st.rows[i]; st.rows[i] = t;
+            renderRows(); updateView();
+          },
+        }, '▲'),
+      ));
+      rowRefs.push({ row: r, rankEl });
+    });
+  }
+
+  const topSelect = h('select', {},
+    ...participants.map(p => h('option', { value: p.id, selected: p.id === st.topId }, p.name)));
+  topSelect.addEventListener('change', () => {
+    st.topId = topSelect.value;
+    resetRows(); renderRows(); updateView();
   });
 
-  form.append(
+  const saveBtn = h('button', { class: 'btn primary' }, '💾 記録する');
+  saveBtn.addEventListener('click', async () => {
+    if (!isReady()) return toast('2位〜4位の±をすべて入力してください', true);
+    saveBtn.disabled = true;
+    const results = buildResults(st.topId, orderRows(st.rows), rule);
+
+    const { data: gameRow, error: e1 } = await sb.from('games').insert({
+      session_id: sessionId, game_no: nextNo, entered_by: me.id,
+    }).select().single();
+    if (e1) { saveBtn.disabled = false; return toast(e1.message, true); }
+
+    const { error: e2 } = await sb.from('game_results').insert(
+      results.map(r => ({
+        game_id: gameRow.id, player_id: r.player_id,
+        base_pt: r.base_pt, rank: r.rank, final_points: r.final_points,
+        tobi: r.tobi, yakitori: false,
+      }))
+    );
+    if (e2) {
+      await sb.from('games').delete().eq('id', gameRow.id);
+      saveBtn.disabled = false;
+      return toast(e2.message, true);
+    }
+    toast('記録しました');
+    location.hash = `#session/${sessionId}`;
+  });
+
+  renderRows();
+  updateView();
+
+  return h('div', { class: 'card' },
+    h('h3', {}, `🀄 第${nextNo}半荘を記録（${fmtDate(session.played_on)}）`),
+    h('p', { class: 'muted small' },
+      'トップの人を選び、残り3人が五捨六入した後の±を申告してください。トップの点数（オカ込み）とウマは自動で計算されます。'),
+    h('label', { class: 'field' }, h('span', {}, '🥇 トップ'), topSelect),
+    h('div', { class: 'gi-head muted small' }, '2位〜4位の申告（着順は入力値から自動で決まります）'),
+    rowsBox,
+    preview,
     h('div', { class: 'btn-row' },
-      h('button', { class: 'btn primary', onclick: async () => {
-        const inputs = [];
-        const used = new Set();
-        for (let i = 0; i < 4; i++) {
-          const pid = form.querySelector(`[name=player_${i}]`).value;
-          const score = parseInt(form.querySelector(`[name=score_${i}]`).value, 10);
-          if (!pid) return toast(`${i+1}人目を選択してください`, true);
-          if (used.has(pid)) return toast('同じプレイヤーが重複しています', true);
-          used.add(pid);
-          if (isNaN(score)) return toast(`${i+1}人目の素点を入力してください`, true);
-          inputs.push({
-            player_id: pid, raw_score: score,
-            tobi: form.querySelector(`[name=tobi_${i}]`).checked,
-            yakitori: false,
-          });
-        }
-        const sum = inputs.reduce((a, b) => a + b.raw_score, 0);
-        if (sum !== expectedSum) {
-          if (!confirm(`素点の合計が ${expectedSum.toLocaleString()} と一致しません（${sum.toLocaleString()}）。\nこのまま保存しますか？`)) return;
-        }
-        const computed = calcResults(inputs, state.rule);
-
-        const { data: gameRow, error: e1 } = await sb.from('games').insert({
-          session_id: sessionId, game_no: nextNo, entered_by: me.id,
-        }).select().single();
-        if (e1) return toast(e1.message, true);
-
-        const { error: e2 } = await sb.from('game_results').insert(
-          computed.map(r => ({
-            game_id: gameRow.id, player_id: r.player_id,
-            raw_score: r.raw_score, rank: r.rank, final_points: r.final_points,
-            tobi: r.tobi, yakitori: r.yakitori,
-          }))
-        );
-        if (e2) {
-          await sb.from('games').delete().eq('id', gameRow.id);
-          return toast(e2.message, true);
-        }
-        toast('記録しました');
-        location.hash = `#session/${sessionId}`;
-      }}, '💾 記録する'),
+      saveBtn,
       h('a', { class: 'btn', href: `#session/${sessionId}` }, 'キャンセル'),
     ),
   );
-
-  return form;
 }
 
 // ============================================================
@@ -887,7 +975,7 @@ async function renderSettings() {
       const upd = {
         starting_points: +f.starting_points.value, return_points: +f.return_points.value,
         uma_1st: +f.uma_1st.value, uma_2nd: +f.uma_2nd.value,
-        yen_per_1000pt: +f.yen_per_1000pt.value, chip_yen: +f.chip_yen.value,
+        yen_per_1000pt: +f.yen_per_1000pt.value, ippatsu_pt: +f.ippatsu_pt.value,
       };
       const { error } = await sb.from('rule_presets').update(upd).eq('id', r.id);
       if (error) return toast(error.message, true);
@@ -900,7 +988,7 @@ async function renderSettings() {
       labelInput('1着ウマ', 'uma_1st', r.uma_1st),
       labelInput('2着ウマ', 'uma_2nd', r.uma_2nd),
       labelInput('1,000点あたりの円（レート）', 'yen_per_1000pt', r.yen_per_1000pt),
-      labelInput('チップ1枚（円）', 'chip_yen', r.chip_yen),
+      labelInput('一発賞 1枚あたりのpt', 'ippatsu_pt', r.ippatsu_pt),
       h('div', { class: 'btn-row' },
         h('button', { class: 'btn primary', type: 'submit' }, '💾 保存'),
       ),
