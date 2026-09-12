@@ -754,13 +754,16 @@ async function renderNewGame(sessionId) {
   const isReady = () => st.rows.length === 3 && st.rows.every(r => Number.isFinite(r.pt));
 
   function updateView() {
-    // 各行の着順バッジ
-    if (isReady()) {
-      const ordered = orderRows(st.rows);
-      rowRefs.forEach(ref => { ref.rankEl.textContent = `${ordered.indexOf(ref.row) + 2}位`; });
-    } else {
-      rowRefs.forEach(ref => { ref.rankEl.textContent = '–'; });
-    }
+    // 各行の着順バッジと ▲ の有効/無効
+    const ordered = isReady() ? orderRows(st.rows) : null;
+    rowRefs.forEach((ref, i) => {
+      ref.rankEl.textContent = ordered ? `${ordered.indexOf(ref.row) + 2}位` : '–';
+      // 点数順は自動で決まるため、▲ が意味を持つのは「すぐ上の行と同点」のときだけ
+      const above = st.rows[i - 1];
+      const tied = i > 0 && above && Number.isFinite(above.pt) && Number.isFinite(ref.row.pt) && above.pt === ref.row.pt;
+      ref.upBtn.disabled = !tied;
+      ref.upBtn.title = tied ? '同点の相手と着順を入れ替える' : '同点のときだけ入れ替えできます';
+    });
 
     // 集計プレビュー
     preview.innerHTML = '';
@@ -813,21 +816,20 @@ async function renderNewGame(sessionId) {
       const tobiBox = h('input', { type: 'checkbox', checked: r.tobi });
       tobiBox.addEventListener('change', () => { r.tobi = tobiBox.checked; updateView(); });
 
+      const upBtn = h('button', { class: 'btn small', type: 'button', disabled: true }, '▲');
+      upBtn.addEventListener('click', () => {
+        const t = st.rows[i - 1]; st.rows[i - 1] = st.rows[i]; st.rows[i] = t;
+        renderRows(); updateView();
+      });
+
       rowsBox.append(h('div', { class: 'gi-row' },
         rankEl,
         h('span', { class: 'gi-name' }, r.name),
         h('div', { class: 'gi-num' }, signBtn(input), input),
         h('label', { class: 'check' }, tobiBox, '💥ハコ'),
-        h('button', {
-          class: 'btn small', type: 'button', disabled: i === 0,
-          title: '一つ上と入れ替える（同点のときの着順調整用）',
-          onclick: () => {
-            const t = st.rows[i - 1]; st.rows[i - 1] = st.rows[i]; st.rows[i] = t;
-            renderRows(); updateView();
-          },
-        }, '▲'),
+        upBtn,
       ));
-      rowRefs.push({ row: r, rankEl });
+      rowRefs.push({ row: r, rankEl, upBtn });
     });
   }
 
