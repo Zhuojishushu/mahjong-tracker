@@ -8,10 +8,21 @@ const sb = createClient(window.MJ_CONFIG.SUPABASE_URL, window.MJ_CONFIG.SUPABASE
 const { hashPin, getCurrentPlayer, setCurrentPlayer, logout } = window.MJ_AUTH;
 
 // index.html の ?v= と必ず揃えること（キャッシュ対策・不具合報告時の切り分け用）
-const APP_VERSION = '3.2.1';
+const APP_VERSION = '3.3.0';
 
 // ---------- 状態 ----------
-const state = { rule: null, players: [], calMonth: null, calSelected: null };
+const state = { rule: null, players: [], calMonth: null, calSelected: null, rankSeason: null, rankSort: 'total' };
+
+// ログイン中の自分のレコード（is_admin を含む）。localStorage には id/name しか持たない
+const myRecord = () => {
+  const me = getCurrentPlayer();
+  return me ? state.players.find(p => p.id === me.id) || null : null;
+};
+const isAdmin = () => !!(myRecord() || {}).is_admin;
+// 順位点 = 各着順の回数 × 配点。配点は設定画面から変更できる
+const rankPtOf = (r, rule) =>
+  r.first_count * rule.rank_pt_1st + r.second_count * rule.rank_pt_2nd
+  + r.third_count * rule.rank_pt_3rd + r.fourth_count * rule.rank_pt_4th;
 
 // ---------- ユーティリティ ----------
 const $ = (s) => document.querySelector(s);
@@ -269,6 +280,14 @@ async function renderHome() {
   const { data: myAvail } = await sb.from('availability')
     .select('available_on').eq('player_id', me.id).gte('available_on', today).order('available_on');
 
+  // 当年ランキング（上位3人）
+  const thisYear = Number(today.slice(0, 4));
+  const { data: seasonRows } = await sb.from('v_season_stats').select('*').eq('season', thisYear);
+  const top = (seasonRows || []).filter(r => r.games_played > 0)
+    .map(r => ({ ...r, total_points: Number(r.total_points), rank_pt: rankPtOf(r, state.rule) }))
+    .sort((a, b) => b.total_points - a.total_points);
+  const medal = ['🥇', '🥈', '🥉'];
+
   return h('div', {},
     h('div', { class: 'card hero' },
       h('h2', {}, `🀄 こんにちは、${me.name}さん`),
@@ -287,6 +306,22 @@ async function renderHome() {
         : h('ul', { class: 'list' },
             ...upcomingSessions.map(s => h('li', {},
               h('a', { href: `#session/${s.id}` }, `${fmtDate(s.played_on)} ${s.played_on === today ? '🟢今日！' : ''}`)
+            ))
+          ),
+    ),
+
+    h('div', { class: 'card' },
+      h('div', { class: 'row-between' },
+        h('h3', {}, `🏆 ${thisYear}年 ランキング`),
+        h('a', { class: 'btn small', href: '#rankings' }, 'すべて見る'),
+      ),
+      top.length === 0
+        ? h('p', { class: 'muted' }, 'まだ今年の記録がありません')
+        : h('ul', { class: 'list rank-top' },
+            ...top.slice(0, 3).map((r, i) => h('li', { class: 'row-between' },
+              h('span', {}, `${medal[i]} ${r.name}`),
+              h('span', { class: `num ${r.total_points >= 0 ? 'pos' : 'neg'}` },
+                `${signed(r.total_points)} pt`),
             ))
           ),
     ),
@@ -985,33 +1020,78 @@ async function renderNewGame(sessionId) {
 // 画面：ランキング
 // ============================================================
 async function renderRankings() {
-  const { data } = await sb.from('v_player_stats').select('*');
-  const sorted = (data || []).filter(d => d.games_played > 0)
-    .sort((a, b) => Number(b.total_points) - Number(a.total_points));
-  return h('div', { class: 'card' },
-    h('h3', {}, '🏆 全期間ランキング'),
-    sorted.length === 0
-      ? h('p', { class: 'muted' }, 'まだ集計データがありません')
-      : h('div', { class: 'table-wrap' }, h('table', {},
-          h('thead', {}, h('tr', {},
-            h('th', {}, '順'), h('th', {}, '名前'),
-            h('th', { class: 'num' }, '半荘'), h('th', { class: 'num' }, '通算pt'),
-            h('th', { class: 'num' }, '平均pt'), h('th', { class: 'num' }, '平均順位'),
-            h('th', { class: 'num' }, 'トップ率'), h('th', { class: 'num' }, 'ラス率'),
-            h('th', { class: 'num' }, 'トビ'),
-          )),
-          h('tbody', {}, ...sorted.map((d, i) => h('tr', {},
-            h('td', {}, h('strong', {}, i + 1)),
-            h('td', {}, d.name),
-            h('td', { class: 'num' }, d.games_played),
-            h('td', { class: `num ${Number(d.total_points) >= 0 ? 'pos' : 'neg'}` }, fmt(Number(d.total_points))),
-            h('td', { class: 'num' }, Number(d.avg_points).toFixed(1)),
-            h('td', { class: 'num' }, Number(d.avg_rank).toFixed(2)),
-            h('td', { class: 'num' }, `${(d.first_count / d.games_played * 100).toFixed(1)}%`),
-            h('td', { class: 'num' }, `${(d.fourth_count / d.games_played * 100).toFixed(1)}%`),
-            h('td', { class: 'num' }, d.tobi_count || ''),
-          ))),
+  const rule = state.rule;
+  const { data } = await sb.from('v_season_stats').select('*');
+  const all = data || [];
+  const seasons = [...new Set(all.map(r => r.season))].sort((a, b) => b - a);
+  const thisYear = Number(todayISO().slice(0, 4));
+  if (!seasons.length) {
+    return h('div', { class: 'card' },
+      h('h3', {}, '🏆 ランキング'),
+      h('p', { class: 'muted' }, 'まだ集計データがありません'));
+  }
+  if (!seasons.includes(state.rankSeason)) {
+    state.rankSeason = seasons.includes(thisYear) ? thisYear : seasons[0];
+  }
+
+  const rows = all.filter(r => r.season === state.rankSeason && r.games_played > 0)
+    .map(r => ({ ...r, total_points: Number(r.total_points), rank_pt: rankPtOf(r, rule) }));
+  const sortKey = state.rankSort === 'rankpt' ? 'rank_pt' : 'total_points';
+  rows.sort((a, b) => b[sortKey] - a[sortKey]);
+
+  const seasonBar = h('div', { class: 'rank-bar' },
+    h('div', { class: 'seg' }, ...seasons.map(y => h('button', {
+      class: `seg-btn ${y === state.rankSeason ? 'active' : ''}`,
+      onclick: () => { state.rankSeason = y; router(); },
+    }, `${y}年`))),
+    h('div', { class: 'seg' },
+      h('button', {
+        class: `seg-btn ${state.rankSort === 'total' ? 'active' : ''}`,
+        onclick: () => { state.rankSort = 'total'; router(); },
+      }, '総得点順'),
+      h('button', {
+        class: `seg-btn ${state.rankSort === 'rankpt' ? 'active' : ''}`,
+        onclick: () => { state.rankSort = 'rankpt'; router(); },
+      }, '順位点順'),
+    ),
+  );
+
+  const pct = (a, b) => (b ? `${(a / b * 100).toFixed(1)}%` : '-');
+
+  return h('div', {},
+    h('div', { class: 'card' },
+      h('h3', {}, `🏆 ${state.rankSeason}年 ランキング`),
+      seasonBar,
+      h('div', { class: 'table-wrap' }, h('table', {},
+        h('thead', {}, h('tr', {},
+          h('th', {}, '順'), h('th', {}, '名前'),
+          h('th', { class: 'num' }, '半荘'),
+          h('th', { class: `num ${sortKey === 'total_points' ? 'sorted' : ''}` }, '総得点'),
+          h('th', { class: `num ${sortKey === 'rank_pt' ? 'sorted' : ''}` }, '順位点'),
+          h('th', { class: 'num' }, '1/2/3/4着'),
+          h('th', { class: 'num' }, 'トップ率'),
+          h('th', { class: 'num' }, 'ラス率'),
+          h('th', { class: 'num' }, '平均順位'),
+          h('th', { class: 'num' }, 'ハコ'),
         )),
+        h('tbody', {}, ...rows.map((r, i) => h('tr', {},
+          h('td', {}, h('strong', {}, i + 1)),
+          h('td', {}, r.name),
+          h('td', { class: 'num' }, r.games_played),
+          h('td', { class: `num ${sortKey === 'total_points' ? 'sorted' : ''} ${r.total_points >= 0 ? 'pos' : 'neg'}` }, signed(r.total_points)),
+          h('td', { class: `num ${sortKey === 'rank_pt' ? 'sorted' : ''} ${r.rank_pt >= 0 ? 'pos' : 'neg'}` }, signed(r.rank_pt)),
+          h('td', { class: 'num small' }, `${r.first_count}/${r.second_count}/${r.third_count}/${r.fourth_count}`),
+          h('td', { class: 'num' }, pct(r.first_count, r.games_played)),
+          h('td', { class: 'num' }, pct(r.fourth_count, r.games_played)),
+          h('td', { class: 'num' }, Number(r.avg_rank).toFixed(2)),
+          h('td', { class: 'num' }, r.hako_count || ''),
+        ))),
+      )),
+      h('p', { class: 'muted small' },
+        `総得点 = 素点 ＋ ウマ ＋ オカ（一発賞・役満賞は日ごとの精算のため含みません）`),
+      h('p', { class: 'muted small' },
+        `順位点 = 1位×${signed(rule.rank_pt_1st)} ＋ 2位×${signed(rule.rank_pt_2nd)} ＋ 3位×${signed(rule.rank_pt_3rd)} ＋ 4位×${signed(rule.rank_pt_4th)}`),
+    ),
   );
 }
 
@@ -1075,37 +1155,66 @@ async function renderSettings() {
     ),
   );
 
-  const ruleCard = h('div', { class: 'card' },
-    h('h3', {}, '⚙️ ルール設定'),
-    h('p', { class: 'muted small' }, '変更すると今後の試合に適用されます。'),
-    h('form', { class: 'rule-form', onsubmit: async (e) => {
-      e.preventDefault();
-      const f = e.target;
-      const upd = {
-        starting_points: +f.starting_points.value, return_points: +f.return_points.value,
-        uma_1st: +f.uma_1st.value, uma_2nd: +f.uma_2nd.value,
-        yen_per_1000pt: +f.yen_per_1000pt.value, ippatsu_pt: +f.ippatsu_pt.value,
-      };
-      const { error } = await sb.from('rule_presets').update(upd).eq('id', r.id);
-      if (error) return toast(error.message, true);
-      toast('保存しました');
-      await loadRule();
-      router();
-    }},
-      labelInput('持ち点', 'starting_points', r.starting_points),
-      labelInput('返し点', 'return_points', r.return_points),
-      labelInput('1着ウマ', 'uma_1st', r.uma_1st),
-      labelInput('2着ウマ', 'uma_2nd', r.uma_2nd),
-      labelInput('1,000点あたりの円（レート）', 'yen_per_1000pt', r.yen_per_1000pt),
-      labelInput('一発賞 1枚あたりのpt', 'ippatsu_pt', r.ippatsu_pt),
-      h('div', { class: 'btn-row' },
-        h('button', { class: 'btn primary', type: 'submit' }, '💾 保存'),
-      ),
-    ),
-  );
+  // ルール設定：編集できるのは管理者のみ。一般メンバーには読み取り専用で見せる
+  const ruleRows = [
+    ['持ち点', r.starting_points],
+    ['返し点', r.return_points],
+    ['オカ（1位総取り）', `${signed((r.return_points - r.starting_points) * 4 / 1000)}pt`],
+    ['ウマ', `${signed(r.uma_1st)} / ${signed(r.uma_2nd)} / ${signed(-r.uma_2nd)} / ${signed(-r.uma_1st)}`],
+    ['レート', `1,000点 = ${r.yen_per_1000pt}円`],
+    ['一発賞', `1枚 ${r.ippatsu_pt}pt（${r.ippatsu_pt * r.yen_per_1000pt}円）`],
+    ['役満賞', `1人あたり ${r.yakuman_pt}pt（${r.yakuman_pt * r.yen_per_1000pt}円）`],
+    ['順位点', `${signed(r.rank_pt_1st)} / ${signed(r.rank_pt_2nd)} / ${signed(r.rank_pt_3rd)} / ${signed(r.rank_pt_4th)}`],
+  ];
 
-  const versionCard = h('p', { class: 'muted small', style: 'text-align:center; margin-top:20px;' },
-    `麻雀トラッカー v${APP_VERSION}`);
+  const ruleCard = isAdmin()
+    ? h('div', { class: 'card' },
+        h('h3', {}, '⚙️ ルール設定'),
+        h('p', { class: 'muted small' }, '変更すると今後の試合に適用されます。過去の記録は書き換わりません。'),
+        h('form', { class: 'rule-form', onsubmit: async (e) => {
+          e.preventDefault();
+          const f = e.target;
+          const upd = {
+            starting_points: +f.starting_points.value, return_points: +f.return_points.value,
+            uma_1st: +f.uma_1st.value, uma_2nd: +f.uma_2nd.value,
+            yen_per_1000pt: +f.yen_per_1000pt.value, ippatsu_pt: +f.ippatsu_pt.value,
+            yakuman_pt: +f.yakuman_pt.value,
+            rank_pt_1st: +f.rank_pt_1st.value, rank_pt_2nd: +f.rank_pt_2nd.value,
+            rank_pt_3rd: +f.rank_pt_3rd.value, rank_pt_4th: +f.rank_pt_4th.value,
+          };
+          const { error } = await sb.from('rule_presets').update(upd).eq('id', r.id);
+          if (error) return toast(error.message, true);
+          toast('保存しました');
+          await loadRule();
+          router();
+        }},
+          labelInput('持ち点', 'starting_points', r.starting_points),
+          labelInput('返し点', 'return_points', r.return_points),
+          labelInput('1着ウマ', 'uma_1st', r.uma_1st),
+          labelInput('2着ウマ', 'uma_2nd', r.uma_2nd),
+          labelInput('1,000点あたりの円（レート）', 'yen_per_1000pt', r.yen_per_1000pt),
+          labelInput('一発賞 1枚あたりのpt', 'ippatsu_pt', r.ippatsu_pt),
+          labelInput('役満賞 1人あたりのpt', 'yakuman_pt', r.yakuman_pt),
+          h('p', { class: 'muted small' }, '▼ 順位点（ランキングの集計に使う配点）'),
+          labelInput('1位の順位点', 'rank_pt_1st', r.rank_pt_1st),
+          labelInput('2位の順位点', 'rank_pt_2nd', r.rank_pt_2nd),
+          labelInput('3位の順位点', 'rank_pt_3rd', r.rank_pt_3rd),
+          labelInput('4位の順位点', 'rank_pt_4th', r.rank_pt_4th),
+          h('div', { class: 'btn-row' },
+            h('button', { class: 'btn primary', type: 'submit' }, '💾 保存'),
+          ),
+        ),
+      )
+    : h('div', { class: 'card' },
+        h('h3', {}, '⚙️ ルール設定'),
+        h('p', { class: 'muted small' }, '変更できるのは管理者のみです。'),
+        h('table', { class: 'mini rule-view' },
+          h('tbody', {}, ...ruleRows.map(([k, v]) => h('tr', {},
+            h('td', { class: 'muted' }, k),
+            h('td', { class: 'num' }, String(v)),
+          ))),
+        ),
+      );
 
   return h('div', {}, profileCard, ruleCard, versionCard);
 }

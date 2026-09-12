@@ -193,3 +193,18 @@ tr.pv-top td { background: rgba(46, 160, 67, 0.12); }
 .gi-num .gi-pt, .gi-num .chip-num { width: 100%; min-width: 0; text-align: right; }
 .chip-cell { justify-content: flex-end; }
 .chip-cell .chip-num { max-width: 5rem; }
+
+/* ランキング画面 */
+.rank-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 14px; }
+.seg { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg-btn {
+  background: transparent; color: var(--muted); border: none;
+  padding: 7px 12px; font-size: 13px; cursor: pointer;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn.active { background: var(--primary); color: #fff; font-weight: 600; }
+th.sorted, td.sorted { background: rgba(46, 160, 67, 0.10); }
+th.sorted { color: var(--text); }
+.rank-top li { font-size: 15px; }
+.rule-view td { padding: 6px 8px; }
+.rule-view td.num { text-align: right; }
