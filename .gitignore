@@ -3,3 +3,6 @@ node_modules/
 *.log
 .vscode/
 .idea/
+
+# Web Push の秘密鍵（絶対にコミットしない）
+.secrets/

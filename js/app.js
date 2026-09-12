@@ -8,7 +8,7 @@ const sb = createClient(window.MJ_CONFIG.SUPABASE_URL, window.MJ_CONFIG.SUPABASE
 const { hashPin, getCurrentPlayer, setCurrentPlayer, logout, authHash } = window.MJ_AUTH;
 
 // index.html の ?v= と必ず揃えること（キャッシュ対策・不具合報告時の切り分け用）
-const APP_VERSION = '3.5.1';
+const APP_VERSION = '3.6.0';
 
 // ---------- 状態 ----------
 const state = { rule: null, players: [], calMonth: null, calSelected: null, rankSeason: null, rankSort: 'total' };
@@ -111,6 +111,117 @@ async function loadRule() {
 async function loadPlayers() {
   const { data } = await sb.from('players_public').select('*').order('name');
   state.players = data || [];
+}
+
+// ---------- 通知（Web Push） ----------
+// iPhoneは「ホーム画面に追加」したアプリでないと通知を受け取れない。
+// そのため、状態に応じて案内を出し分ける。
+const PUSH = {
+  supported: () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window,
+  standalone: () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true,
+  isIOS: () => /iPad|iPhone|iPod/.test(navigator.userAgent),
+};
+
+const urlB64ToUint8Array = (base64) => {
+  const pad = '='.repeat((4 - (base64.length % 4)) % 4);
+  const raw = atob((base64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+};
+const abToB64 = (buf) =>
+  btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+async function swRegistration() {
+  if (!('serviceWorker' in navigator)) return null;
+  try { return await navigator.serviceWorker.register('sw.js'); }
+  catch (e) { console.error('SW登録に失敗', e); return null; }
+}
+
+async function currentSubscription() {
+  if (!PUSH.supported()) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? await reg.pushManager.getSubscription() : null;
+}
+
+async function enablePush() {
+  const me = getCurrentPlayer();
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('通知が許可されませんでした。端末の設定から許可してください');
+  const reg = (await navigator.serviceWorker.getRegistration()) || await swRegistration();
+  if (!reg) throw new Error('通知の準備に失敗しました');
+  await navigator.serviceWorker.ready;
+  const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlB64ToUint8Array(window.MJ_CONFIG.VAPID_PUBLIC_KEY),
+  });
+  const json = sub.toJSON();
+  const { error } = await sb.rpc('mj_push_subscribe', {
+    p_player_id: me.id, p_pin_hash: authHash(),
+    p_endpoint: sub.endpoint, p_p256dh: json.keys.p256dh, p_auth: json.keys.auth,
+  });
+  if (error) throw new Error(error.message);
+}
+
+async function disablePush() {
+  const me = getCurrentPlayer();
+  const sub = await currentSubscription();
+  if (!sub) return;
+  await sb.rpc('mj_push_unsubscribe', {
+    p_player_id: me.id, p_pin_hash: authHash(), p_endpoint: sub.endpoint,
+  });
+  await sub.unsubscribe();
+}
+
+// 設定画面の通知カード
+async function buildPushCard() {
+  const card = h('div', { class: 'card' });
+
+  const paint = async () => {
+    card.innerHTML = '';
+    card.append(h('h3', {}, '🔔 通知'));
+
+    if (!PUSH.supported()) {
+      card.append(h('p', { class: 'muted small' }, 'この端末／ブラウザは通知に対応していません。'));
+      return;
+    }
+    // iPhoneはホーム画面アプリでないと通知を受け取れない
+    if (PUSH.isIOS() && !PUSH.standalone()) {
+      card.append(
+        h('p', { class: 'small warn-box' }, '📱 iPhoneで通知を受け取るには、先に「ホーム画面に追加」が必要です'),
+        h('ol', { class: 'muted small howto' },
+          h('li', {}, 'Safariの共有ボタン（□に↑）をタップ'),
+          h('li', {}, '「ホーム画面に追加」を選ぶ'),
+          h('li', {}, 'ホーム画面のアイコンから開き直す'),
+          h('li', {}, 'この画面に戻って通知をオンにする'),
+        ),
+      );
+      return;
+    }
+
+    const sub = await currentSubscription();
+    const on = !!sub && Notification.permission === 'granted';
+    card.append(h('p', { class: 'muted small' },
+      '卓が4人で成立したとき、参加している人にお知らせが届きます。'));
+    card.append(h('p', {}, on ? '✅ この端末は通知オンです' : '🔕 この端末は通知オフです'));
+
+    const btn = h('button', { class: `btn ${on ? '' : 'primary'}` }, on ? '通知を止める' : '🔔 通知をオンにする');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        if (on) { await disablePush(); toast('通知を止めました'); }
+        else { await enablePush(); toast('通知をオンにしました'); }
+      } catch (e) { toast(e.message, true); }
+      btn.disabled = false;
+      await paint();
+    });
+    card.append(h('div', { class: 'btn-row' }, btn));
+    if (Notification.permission === 'denied') {
+      card.append(h('p', { class: 'muted small' },
+        '※ 通知がブロックされています。端末の設定からこのアプリの通知を許可してください。'));
+    }
+  };
+
+  await paint();
+  return card;
 }
 
 // ---------- 掲示板 ----------
@@ -1371,7 +1482,7 @@ async function renderSettings() {
   const versionCard = h('p', { class: 'muted small', style: 'text-align:center; margin-top:20px;' },
     `麻雀トラッカー v${APP_VERSION}`);
 
-  return h('div', {}, profileCard, buildRosterCard(), ruleCard, versionCard);
+  return h('div', {}, profileCard, await buildPushCard(), buildRosterCard(), ruleCard, versionCard);
 }
 function labelInput(label, name, value) {
   return h('label', { class: 'field' },
@@ -1384,6 +1495,7 @@ function labelInput(label, name, value) {
 // 起動
 // ============================================================
 async function bootstrap() {
+  swRegistration();
   if (window.MJ_CONFIG.SUPABASE_URL.includes('YOUR-PROJECT')) {
     $('#app').innerHTML = `<div class="card err"><h3>⚠️ セットアップが必要です</h3><p>js/config.js を設定してください。</p></div>`;
     return;

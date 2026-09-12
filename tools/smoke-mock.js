@@ -13,9 +13,12 @@ var document = { createElement: mkEl, createTextNode: (t) => ({ nodeType:3, text
 var localStorage = { getItem: () => JSON.stringify({ id:'p1', name:'TAKUMI' }), setItem(){}, removeItem(){} };
 var location = { hash:'#home', reload(){} };
 var setTimeout = (f) => 0;
+var navigator = { userAgent: 'Mozilla/5.0 (Macintosh)', serviceWorker: { register: async () => null, getRegistration: async () => null, ready: Promise.resolve() } };
+var Notification = { permission: 'default', requestPermission: async () => 'granted' };
+var atob = (x) => x; var btoa = (x) => x;
 var crypto = { subtle: { digest: async () => new ArrayBuffer(32) } };
 var confirm = () => true;
-var window = { addEventListener(){}, MJ_CONFIG:{ SUPABASE_URL:'https://x.supabase.co', SUPABASE_ANON_KEY:'k' } };
+var window = { addEventListener(){}, matchMedia: () => ({ matches: false }), navigator: { standalone: false }, PushManager: function(){}, MJ_CONFIG:{ SUPABASE_URL:'https://x.supabase.co', SUPABASE_ANON_KEY:'k' } };
 
 // Supabase クライアントのモック：テーブルごとに固定データを返す
 const RULE = { id:'r1', starting_points:26000, return_points:30000, uma_1st:10, uma_2nd:5,
