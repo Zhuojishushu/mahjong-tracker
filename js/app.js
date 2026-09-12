@@ -8,7 +8,7 @@ const sb = createClient(window.MJ_CONFIG.SUPABASE_URL, window.MJ_CONFIG.SUPABASE
 const { hashPin, getCurrentPlayer, setCurrentPlayer, logout, authHash } = window.MJ_AUTH;
 
 // index.html の ?v= と必ず揃えること（キャッシュ対策・不具合報告時の切り分け用）
-const APP_VERSION = '3.6.2';
+const APP_VERSION = '3.6.3';
 
 // ---------- 状態 ----------
 const state = { rule: null, players: [], calMonth: null, calSelected: null, rankSeason: null, rankSort: 'total' };
@@ -720,13 +720,17 @@ async function renderCalendar() {
     const { count } = await sb.from('availability').select('*', { count: 'exact', head: true }).eq('available_on', date);
     if (count === 4) {
       const { data: existing } = await sb.from('sessions').select('id').eq('played_on', date).maybeSingle();
-      if (!existing) {
+      let sessionId = existing ? existing.id : null;
+      if (!sessionId) {
         const { data: created } = await sb.from('sessions').insert({
           played_on: date, rule_id: state.rule.id, confirmed_at: new Date().toISOString(),
         }).select('id').single();
+        sessionId = created ? created.id : null;
         toast(`🎉 ${fmtDate(date)} 開催成立！`);
-        if (created) notifySession(created.id);
       }
+      // 卓が既にあった場合（取消→再申込など）も通知を試みる。
+      // 重複は sessions.notified_at で防いでいるため二重には届かない。
+      if (sessionId) notifySession(sessionId);
     } else {
       toast(`参加申込しました（${count}/4）`);
     }
