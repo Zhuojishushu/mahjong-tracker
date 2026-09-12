@@ -8,7 +8,7 @@ const sb = createClient(window.MJ_CONFIG.SUPABASE_URL, window.MJ_CONFIG.SUPABASE
 const { hashPin, getCurrentPlayer, setCurrentPlayer, logout, authHash } = window.MJ_AUTH;
 
 // index.html の ?v= と必ず揃えること（キャッシュ対策・不具合報告時の切り分け用）
-const APP_VERSION = '3.6.0';
+const APP_VERSION = '3.6.1';
 
 // ---------- 状態 ----------
 const state = { rule: null, players: [], calMonth: null, calSelected: null, rankSeason: null, rankSort: 'total' };
@@ -179,26 +179,31 @@ async function buildPushCard() {
     card.innerHTML = '';
     card.append(h('h3', {}, '🔔 通知'));
 
-    if (!PUSH.supported()) {
-      card.append(h('p', { class: 'muted small' }, 'この端末／ブラウザは通知に対応していません。'));
-      return;
-    }
-    // iPhoneはホーム画面アプリでないと通知を受け取れない
+    // iPhoneはホーム画面アプリでないと通知機能そのものが使えないため、
+    // 「非対応」と表示する前に、こちらの案内を優先する
     if (PUSH.isIOS() && !PUSH.standalone()) {
       card.append(
         h('p', { class: 'small warn-box' }, '📱 iPhoneで通知を受け取るには、先に「ホーム画面に追加」が必要です'),
         h('ol', { class: 'muted small howto' },
-          h('li', {}, 'Safariの共有ボタン（□に↑）をタップ'),
+          h('li', {}, '画面下の共有ボタン（□に↑）をタップ'),
           h('li', {}, '「ホーム画面に追加」を選ぶ'),
-          h('li', {}, 'ホーム画面のアイコンから開き直す'),
-          h('li', {}, 'この画面に戻って通知をオンにする'),
+          h('li', {}, '追加された「麻雀」のアイコンから開き直す'),
+          h('li', {}, 'この設定画面に戻って、通知をオンにする'),
         ),
+        h('p', { class: 'muted small' }, '※ Safariのタブで開いている間は通知を受け取れません（iPhoneの仕様です）'),
       );
+      return;
+    }
+    if (!PUSH.supported()) {
+      card.append(h('p', { class: 'muted small' }, 'この端末／ブラウザは通知に対応していません。'));
       return;
     }
 
     const sub = await currentSubscription();
     const on = !!sub && Notification.permission === 'granted';
+    if (PUSH.standalone()) {
+      card.append(h('p', { class: 'muted small' }, '📱 ホーム画面のアプリとして起動中です'));
+    }
     card.append(h('p', { class: 'muted small' },
       '卓が4人で成立したとき、参加している人にお知らせが届きます。'));
     card.append(h('p', {}, on ? '✅ この端末は通知オンです' : '🔕 この端末は通知オフです'));
