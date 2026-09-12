@@ -7,6 +7,7 @@
     ['セッション一覧', () => renderSessions()],
     ['セッション詳細', () => renderSessionDetail('s1')],
     ['半荘入力', () => renderNewGame('s1')],
+    ['全体掲示板', () => renderBoard()],
     ['ランキング', () => renderRankings()],
     ['設定（管理者）', () => renderSettings()],
     ['ログイン', () => renderLogin()],

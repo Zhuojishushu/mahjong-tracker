@@ -209,3 +209,21 @@ th.sorted { color: var(--text); }
 .rule-view td { padding: 6px 8px; }
 .rule-view td.num { text-align: right; }
 .btn-row.inline { display: flex; gap: 6px; margin: 0; }
+
+/* 掲示板 */
+.board-list { display: flex; flex-direction: column; gap: 10px; margin: 12px 0 14px; max-height: 60vh; overflow-y: auto; }
+.post { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; }
+.post.mine { border-color: rgba(46,160,67,0.45); background: rgba(46,160,67,0.07); }
+.post-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.post-author { font-size: 13px; font-weight: 600; color: var(--accent); }
+.post-time { margin-left: auto; }
+.post-del { background: transparent; border: none; color: var(--muted); font-size: 17px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.post-del:hover { color: var(--danger); }
+.post-body { font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+.post-body a { text-decoration: underline; }
+.post-form { display: flex; gap: 8px; align-items: flex-end; }
+.post-input { flex: 1; min-width: 0; resize: vertical; font-family: inherit; font-size: 14px; }
+.post-form .btn { flex: none; }
+@media (max-width: 480px) {
+  .nav a { font-size: 10px; }
+}

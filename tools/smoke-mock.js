@@ -8,6 +8,7 @@ function mkEl(tag){
   return el;
 }
 var document = { createElement: mkEl, createTextNode: (t) => ({ nodeType:3, textContent:String(t) }),
+  createDocumentFragment: () => mkEl('#fragment'),
   querySelector: () => mkEl('div'), querySelectorAll: () => [], body: mkEl('body') };
 var localStorage = { getItem: () => JSON.stringify({ id:'p1', name:'TAKUMI' }), setItem(){}, removeItem(){} };
 var location = { hash:'#home', reload(){} };
@@ -55,4 +56,10 @@ function qb(table){
   }});
   return chain;
 }
-var supabase = { createClient: () => ({ from: qb, rpc: async () => ({ data: [], error: null }) }) };
+const RPC = {
+  mj_board_list: [
+    { id:'b1', player_id:'p1', author:'TAKUMI', body:'19時に現地集合で！ https://example.com/map', created_at:'2026-09-12T10:00:00Z' },
+    { id:'b2', player_id:'p2', author:'テストA', body:'了解です\n少し遅れるかも', created_at:'2026-09-12T10:05:00Z' },
+  ],
+};
+var supabase = { createClient: () => ({ from: qb, rpc: async (name) => ({ data: RPC[name] || [], error: null }) }) };

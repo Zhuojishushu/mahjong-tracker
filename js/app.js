@@ -8,7 +8,7 @@ const sb = createClient(window.MJ_CONFIG.SUPABASE_URL, window.MJ_CONFIG.SUPABASE
 const { hashPin, getCurrentPlayer, setCurrentPlayer, logout, authHash } = window.MJ_AUTH;
 
 // index.html の ?v= と必ず揃えること（キャッシュ対策・不具合報告時の切り分け用）
-const APP_VERSION = '3.4.0';
+const APP_VERSION = '3.5.0';
 
 // ---------- 状態 ----------
 const state = { rule: null, players: [], calMonth: null, calSelected: null, rankSeason: null, rankSort: 'total' };
@@ -113,6 +113,99 @@ async function loadPlayers() {
   state.players = data || [];
 }
 
+// ---------- 掲示板 ----------
+// 投稿本文は必ず文字として描画し、URLだけをリンクに差し替える。
+// 本文をHTMLとして解釈させないことで、投稿経由の画面乗っ取りを防ぐ。
+function renderPostBody(text) {
+  const frag = document.createDocumentFragment();
+  const re = /(https?:\/\/[^\s<>"'）】]+)/g;
+  let last = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) frag.append(document.createTextNode(text.slice(last, m.index)));
+    frag.append(h('a', { href: m[0], target: '_blank', rel: 'noopener noreferrer' }, m[0]));
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) frag.append(document.createTextNode(text.slice(last)));
+  return frag;
+}
+
+const fmtPostTime = (iso) => {
+  const d = new Date(iso);
+  const p2 = (v) => String(v).padStart(2, '0');
+  return `${d.getMonth() + 1}/${d.getDate()} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+};
+
+// scope: 'global'（全体）または 'session'（卓の参加者のみ）
+async function buildBoard(scope, sessionId, opts = {}) {
+  const me = getCurrentPlayer();
+  const args = { p_player_id: me.id, p_pin_hash: authHash(), p_scope: scope, p_session_id: sessionId || null };
+  const { data, error } = await sb.rpc('mj_board_list', args);
+
+  const card = h('div', { class: 'card' });
+  const list = h('div', { class: 'board-list' });
+
+  const refresh = async () => {
+    const res = await sb.rpc('mj_board_list', args);
+    paint(res.error ? null : (res.data || []), res.error);
+  };
+
+  function paint(posts, err) {
+    list.innerHTML = '';
+    if (err) { list.append(h('p', { class: 'muted small' }, err.message)); return; }
+    if (!posts.length) {
+      list.append(h('p', { class: 'muted small' }, opts.empty || 'まだ投稿がありません'));
+      return;
+    }
+    for (const post of posts) {
+      const canDelete = post.player_id === me.id || isAdmin();
+      list.append(h('div', { class: `post ${post.player_id === me.id ? 'mine' : ''}` },
+        h('div', { class: 'post-head' },
+          h('span', { class: 'post-author' }, post.author),
+          h('span', { class: 'post-time muted small' }, fmtPostTime(post.created_at)),
+          canDelete && h('button', {
+            class: 'post-del', title: '削除',
+            onclick: async () => {
+              if (!confirm('この投稿を削除しますか？')) return;
+              const { error } = await sb.rpc('mj_board_delete', {
+                p_player_id: me.id, p_pin_hash: authHash(), p_post_id: post.id,
+              });
+              if (error) return toast(error.message, true);
+              await refresh();
+            },
+          }, '×'),
+        ),
+        h('div', { class: 'post-body' }, renderPostBody(post.body)),
+      ));
+    }
+  }
+  paint(error ? null : (data || []), error);
+
+  const input = h('textarea', { class: 'post-input', rows: '2', maxlength: '1000', placeholder: opts.placeholder || 'メッセージを入力…' });
+  const sendBtn = h('button', { class: 'btn primary' }, '送信');
+  sendBtn.addEventListener('click', async () => {
+    const body = input.value.trim();
+    if (!body) return toast('本文を入力してください', true);
+    sendBtn.disabled = true;
+    const { error } = await sb.rpc('mj_board_post', {
+      p_player_id: me.id, p_pin_hash: authHash(), p_scope: scope,
+      p_body: body, p_session_id: sessionId || null,
+    });
+    sendBtn.disabled = false;
+    if (error) return toast(error.message, true);
+    input.value = '';
+    await refresh();
+  });
+
+  card.append(
+    h('h3', {}, opts.title || '💬 掲示板'),
+    opts.note && h('p', { class: 'muted small' }, opts.note),
+    list,
+    h('div', { class: 'post-form' }, input, sendBtn),
+    h('p', { class: 'muted small' }, 'URLを書くとリンクになります。画像は投稿できません。'),
+  );
+  return card;
+}
+
 // ============================================================
 // ルーター
 // ============================================================
@@ -126,6 +219,7 @@ const routes = {
   'sessions': renderSessions,
   'session': renderSessionDetail,
   'new-game': renderNewGame,
+  'board': renderBoard,
   'rankings': renderRankings,
   'settings': renderSettings,
 };
@@ -770,6 +864,15 @@ async function renderSessionDetail(sessionId) {
     return card;
   }
 
+  const boardCard = participantIds.has(me.id)
+    ? await buildBoard('session', sessionId, {
+        title: '💬 この卓の連絡板',
+        note: 'この日の4人だけが読み書きできます。開始時間や持ち物の連絡にどうぞ。',
+        placeholder: '例）19時に現地集合で！',
+        empty: 'まだ投稿がありません',
+      })
+    : null;
+
   return h('div', {},
     h('div', { class: 'card' },
       h('div', { class: 'row-between' },
@@ -794,6 +897,8 @@ async function renderSessionDetail(sessionId) {
       ),
       !participantIds.has(me.id) && h('p', { class: 'muted small warn-box' }, '⚠️ あなたはこの日の参加者ではないため、閲覧のみ可能です'),
     ),
+
+    boardCard,
 
     h('div', { class: 'card' },
       h('h3', {}, '💰 セッション集計（Daily精算）'),
@@ -1033,6 +1138,20 @@ async function renderNewGame(sessionId) {
       saveBtn,
       h('a', { class: 'btn', href: `#session/${sessionId}` }, 'キャンセル'),
     ),
+  );
+}
+
+// ============================================================
+// 画面：全体掲示板
+// ============================================================
+async function renderBoard() {
+  return h('div', {},
+    await buildBoard('global', null, {
+      title: '💬 みんなの掲示板',
+      note: '登録メンバー全員が読み書きできます。',
+      placeholder: '例）今週末どこかで打ちませんか？',
+      empty: 'まだ投稿がありません。最初のひとことをどうぞ',
+    }),
   );
 }
 
