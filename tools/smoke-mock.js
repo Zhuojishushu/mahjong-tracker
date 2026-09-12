@@ -65,4 +65,5 @@ const RPC = {
     { id:'b2', player_id:'p2', author:'テストA', body:'了解です\n少し遅れるかも', created_at:'2026-09-12T10:05:00Z' },
   ],
 };
-var supabase = { createClient: () => ({ from: qb, rpc: async (name) => ({ data: RPC[name] || [], error: null }) }) };
+var supabase = { createClient: () => ({ from: qb, rpc: async (name) => ({ data: RPC[name] || [], error: null }),
+  functions: { invoke: async () => ({ data: { ok: true }, error: null }) } }) };

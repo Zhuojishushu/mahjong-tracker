@@ -8,7 +8,7 @@ const sb = createClient(window.MJ_CONFIG.SUPABASE_URL, window.MJ_CONFIG.SUPABASE
 const { hashPin, getCurrentPlayer, setCurrentPlayer, logout, authHash } = window.MJ_AUTH;
 
 // index.html の ?v= と必ず揃えること（キャッシュ対策・不具合報告時の切り分け用）
-const APP_VERSION = '3.6.1';
+const APP_VERSION = '3.6.2';
 
 // ---------- 状態 ----------
 const state = { rule: null, players: [], calMonth: null, calSelected: null, rankSeason: null, rankSort: 'total' };
@@ -171,6 +171,19 @@ async function disablePush() {
   await sub.unsubscribe();
 }
 
+// 卓の成立を参加者に通知する（失敗しても申込自体は成立させる）
+async function notifySession(sessionId) {
+  try {
+    const me = getCurrentPlayer();
+    const { error } = await sb.functions.invoke('notify-session', {
+      body: { session_id: sessionId, player_id: me.id, pin_hash: authHash() },
+    });
+    if (error) console.error('通知の送信に失敗しました', error);
+  } catch (e) {
+    console.error('通知の送信に失敗しました', e);
+  }
+}
+
 // 設定画面の通知カード
 async function buildPushCard() {
   const card = h('div', { class: 'card' });
@@ -218,7 +231,23 @@ async function buildPushCard() {
       btn.disabled = false;
       await paint();
     });
-    card.append(h('div', { class: 'btn-row' }, btn));
+    const row = h('div', { class: 'btn-row' }, btn);
+    if (on) {
+      const testBtn = h('button', { class: 'btn' }, 'テスト通知を送る');
+      testBtn.addEventListener('click', async () => {
+        testBtn.disabled = true;
+        const me = getCurrentPlayer();
+        const { data, error } = await sb.functions.invoke('notify-session', {
+          body: { player_id: me.id, pin_hash: authHash(), test: true },
+        });
+        testBtn.disabled = false;
+        if (error) return toast('送信に失敗しました', true);
+        if (data && data.error) return toast(data.error, true);
+        toast('送信しました。数秒で通知が届きます');
+      });
+      row.append(testBtn);
+    }
+    card.append(row);
     if (Notification.permission === 'denied') {
       card.append(h('p', { class: 'muted small' },
         '※ 通知がブロックされています。端末の設定からこのアプリの通知を許可してください。'));
@@ -692,10 +721,11 @@ async function renderCalendar() {
     if (count === 4) {
       const { data: existing } = await sb.from('sessions').select('id').eq('played_on', date).maybeSingle();
       if (!existing) {
-        await sb.from('sessions').insert({
+        const { data: created } = await sb.from('sessions').insert({
           played_on: date, rule_id: state.rule.id, confirmed_at: new Date().toISOString(),
-        });
+        }).select('id').single();
         toast(`🎉 ${fmtDate(date)} 開催成立！`);
+        if (created) notifySession(created.id);
       }
     } else {
       toast(`参加申込しました（${count}/4）`);
