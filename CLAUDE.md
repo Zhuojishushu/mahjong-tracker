@@ -46,6 +46,8 @@ mahjong-tracker/
 │   ├── config.js        # Supabase接続情報
 │   ├── auth.js          # PIN認証（IIFE）
 │   └── app.js           # 本体（SPA・全画面・スコア計算）
+├── tools/
+│   └── smoke.sh         # 全画面の描画スモークテスト（デプロイ前に実行）
 ├── supabase/
 │   ├── schema.sql       # 初回スキーマ
 │   ├── schema_v2.sql    # PINログイン・カレンダー（Phase 2a）
@@ -98,6 +100,8 @@ mahjong-tracker/
 - **JS/CSSのキャッシュ対策は `index.html` が読み込み時刻を付けて動的に読む方式**
   （GitHub Pages は index.html に max-age=600 を付けるため、`?v=` の書き換えだけでは
   古いHTMLが古いJSを読み続けてしまう。この方式なら index.html が10分古くても常に最新のJSが入る）
+- **デプロイ前に `./tools/smoke.sh` を実行する**（全画面の描画を実際に走らせて実行時エラーを検出。
+  構文チェックだけでは関数内の未定義変数などを拾えず、実際に本番へ出してしまった事故がある）
 - **リリースのたびに `js/app.js` の `APP_VERSION` を上げる**（設定画面の最下部に表示され、
   利用者に「設定画面のバージョンは？」と聞くだけで切り分けができる）
 - Supabase無料プランは1週間未使用で自動停止する。cron-job.org で6時間おきにキープアライブ中。
