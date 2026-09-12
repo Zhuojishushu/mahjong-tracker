@@ -1,5 +1,5 @@
 // ============================================================
-// 麻雀トラッカー メインアプリ v2
+// M雀リーグ メインアプリ
 // - 名前+PINログイン
 // - カレンダー参加申込（4人で自動成立）
 // ============================================================
@@ -8,7 +8,7 @@ const sb = createClient(window.MJ_CONFIG.SUPABASE_URL, window.MJ_CONFIG.SUPABASE
 const { hashPin, getCurrentPlayer, setCurrentPlayer, logout, authHash } = window.MJ_AUTH;
 
 // index.html の ?v= と必ず揃えること（キャッシュ対策・不具合報告時の切り分け用）
-const APP_VERSION = '3.6.4';
+const APP_VERSION = '3.7.0';
 
 // ---------- 状態 ----------
 const state = { rule: null, players: [], calMonth: null, calSelected: null, rankSeason: null, rankSort: 'total' };
@@ -425,7 +425,7 @@ async function renderLogin() {
   const render = () => {
     card.innerHTML = '';
     card.append(
-      h('h2', {}, '🀄 麻雀トラッカー'),
+      h('h2', {}, '🀄 M雀リーグ'),
       h('div', { class: 'tabs' },
         h('button', { class: `tab ${tabState.mode==='login'?'active':''}`, onclick: () => { tabState.mode='login'; render(); } }, 'ログイン'),
         h('button', { class: `tab ${tabState.mode==='register'?'active':''}`, onclick: () => { tabState.mode='register'; render(); } }, '新規登録'),
@@ -1519,7 +1519,7 @@ async function renderSettings() {
       );
 
   const versionCard = h('p', { class: 'muted small', style: 'text-align:center; margin-top:20px;' },
-    `麻雀トラッカー v${APP_VERSION}`);
+    `M雀リーグ v${APP_VERSION}`);
 
   return h('div', {}, profileCard, await buildPushCard(), buildRosterCard(), ruleCard, versionCard);
 }

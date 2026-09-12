@@ -238,3 +238,7 @@ th.sorted { color: var(--text); }
 /* 通知の案内 */
 .howto { padding-left: 20px; margin: 8px 0 0; }
 .howto li { margin-bottom: 4px; }
+
+/* ブランド表示 */
+header h1 { display: flex; align-items: center; gap: 8px; }
+.brand-icon { width: 26px; height: 26px; border-radius: 6px; flex: none; }

@@ -12,7 +12,7 @@ self.addEventListener('push', (event) => {
   try { data = event.data ? event.data.json() : {}; }
   catch (_) { data = { body: event.data ? event.data.text() : '' }; }
 
-  event.waitUntil(self.registration.showNotification(data.title || '麻雀トラッカー', {
+  event.waitUntil(self.registration.showNotification(data.title || 'M雀リーグ', {
     body: data.body || '',
     icon: './icons/icon-192.png',
     badge: './icons/icon-192.png',
