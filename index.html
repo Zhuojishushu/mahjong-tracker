@@ -5,7 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0e1419">
   <title>麻雀トラッカー</title>
-  <link rel="stylesheet" href="css/style.css?v=3.2.0">
+  <script>
+    // GitHub Pages は index.html を10分キャッシュするため、?v= を書き換えるだけでは
+    // 古いHTMLが古いJS/CSSを読み続けてしまう。読み込み時刻を付けて常に最新を取得する。
+    window.__MJ_T = Date.now();
+    (function () {
+      var l = document.createElement('link');
+      l.rel = 'stylesheet';
+      l.href = 'css/style.css?t=' + window.__MJ_T;
+      document.head.appendChild(l);
+    })();
+  </script>
 </head>
 <body>
   <header>
@@ -28,8 +38,17 @@
   </nav>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/config.js?v=3.2.0"></script>
-  <script src="js/auth.js?v=3.2.0"></script>
-  <script src="js/app.js?v=3.2.0"></script>
+  <script>
+    // async=false で挿入順どおりに実行される（config → auth → app の順が必要）
+    (function () {
+      var t = window.__MJ_T || Date.now();
+      ['js/config.js', 'js/auth.js', 'js/app.js'].forEach(function (src) {
+        var el = document.createElement('script');
+        el.src = src + '?t=' + t;
+        el.async = false;
+        document.head.appendChild(el);
+      });
+    })();
+  </script>
 </body>
 </html>
