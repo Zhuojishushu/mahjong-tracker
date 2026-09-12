@@ -5,10 +5,10 @@
 // ============================================================
 const { createClient } = supabase;
 const sb = createClient(window.MJ_CONFIG.SUPABASE_URL, window.MJ_CONFIG.SUPABASE_ANON_KEY);
-const { hashPin, getCurrentPlayer, setCurrentPlayer, logout } = window.MJ_AUTH;
+const { hashPin, getCurrentPlayer, setCurrentPlayer, logout, authHash } = window.MJ_AUTH;
 
 // index.html の ?v= と必ず揃えること（キャッシュ対策・不具合報告時の切り分け用）
-const APP_VERSION = '3.3.1';
+const APP_VERSION = '3.4.0';
 
 // ---------- 状態 ----------
 const state = { rule: null, players: [], calMonth: null, calSelected: null, rankSeason: null, rankSort: 'total' };
@@ -109,7 +109,7 @@ async function loadRule() {
   state.rule = data[0];
 }
 async function loadPlayers() {
-  const { data } = await sb.from('players').select('*').order('name');
+  const { data } = await sb.from('players_public').select('*').order('name');
   state.players = data || [];
 }
 
@@ -203,11 +203,12 @@ function renderLoginForm() {
     const name = e.target.name.value;
     const pin  = e.target.pin.value;
     if (!/^\d{4}$/.test(pin)) return toast('PINは4桁の数字です', true);
-    const player = state.players.find(p => p.name === name);
-    if (!player) return toast('プレイヤーが見つかりません', true);
     const hash = await hashPin(pin);
-    if (player.pin_hash !== hash) return toast('PINが違います', true);
-    setCurrentPlayer({ id: player.id, name: player.name });
+    const { data, error } = await sb.rpc('mj_login', { p_name: name, p_pin_hash: hash });
+    if (error) return toast(error.message, true);
+    const player = (data || [])[0];
+    if (!player) return toast('名前かPINが違います', true);
+    setCurrentPlayer({ id: player.id, name: player.name, is_admin: player.is_admin, h: hash });
     toast(`ようこそ、${player.name}さん`);
     location.hash = '#home';
   }},
@@ -238,12 +239,13 @@ function renderRegisterForm() {
     if (!name) return toast('名前を入力してください', true);
     if (!/^\d{4}$/.test(pin)) return toast('PINは4桁の数字です', true);
     if (pin !== pin2) return toast('PINが一致しません', true);
-    if (state.players.find(p => p.name === name)) return toast('同じ名前が既に登録されています', true);
     const hash = await hashPin(pin);
-    const { data, error } = await sb.from('players').insert({ name, pin_hash: hash }).select().single();
+    const { data, error } = await sb.rpc('mj_register', { p_name: name, p_pin_hash: hash });
     if (error) return toast(error.message, true);
-    setCurrentPlayer({ id: data.id, name: data.name });
-    toast(`登録完了！ようこそ、${name}さん`);
+    const player = (data || [])[0];
+    if (!player) return toast('登録に失敗しました', true);
+    setCurrentPlayer({ id: player.id, name: player.name, is_admin: player.is_admin, h: hash });
+    toast(`登録完了！ようこそ、${player.name}さん`);
     location.hash = '#home';
   }},
     h('p', { class: 'muted small' }, '初めての方はここから登録してください。PINは次回ログインに必要です（忘れないように）。'),
@@ -508,17 +510,35 @@ async function renderPlayers() {
     h('div', { class: 'card' },
       h('h3', {}, `👥 参加者一覧 (${state.players.length}人)`),
       h('p', { class: 'muted small' }, '※新規追加は各人が「ログイン画面 → 新規登録」から自分で行います'),
+      isAdmin() && h('p', { class: 'muted small' }, '🔑 管理者として、PINのリセットと削除ができます'),
       state.players.length === 0
         ? h('p', { class: 'muted' }, '参加者が未登録です')
         : h('ul', { class: 'list' },
             ...state.players.map(p => h('li', { class: 'row-between' },
-              h('span', {}, `${p.name}${p.id === me.id ? ' (あなた)' : ''}`),
-              p.id !== me.id && h('button', { class: 'btn small danger', onclick: async () => {
-                if (!confirm(`${p.name} を削除しますか？\n（過去の試合記録は残ります。PIN忘れた時の再登録用に使ってください）`)) return;
-                const { error } = await sb.from('players').delete().eq('id', p.id);
-                if (error) return toast(error.message, true);
-                router();
-              }}, '削除'),
+              h('span', {}, `${p.name}${p.id === me.id ? ' (あなた)' : ''}${p.is_admin ? ' 🔑' : ''}`),
+              isAdmin() && p.id !== me.id && h('span', { class: 'btn-row inline' },
+                h('button', { class: 'btn small', onclick: async () => {
+                  const np = prompt(`${p.name} さんの新しい4桁PINを入力してください`);
+                  if (np === null) return;
+                  if (!/^\d{4}$/.test(np)) return toast('PINは4桁の数字です', true);
+                  const { error } = await sb.rpc('mj_admin_reset_pin', {
+                    p_admin_id: me.id, p_admin_pin_hash: authHash(),
+                    p_target_id: p.id, p_new_pin_hash: await hashPin(np),
+                  });
+                  if (error) return toast(error.message, true);
+                  toast(`${p.name} さんのPINを ${np} にリセットしました`);
+                }}, 'PINリセット'),
+                h('button', { class: 'btn small danger', onclick: async () => {
+                  if (!confirm(`${p.name} を削除しますか？\n試合記録がある人は削除できません。`)) return;
+                  const { error } = await sb.rpc('mj_admin_delete_player', {
+                    p_admin_id: me.id, p_admin_pin_hash: authHash(), p_target_id: p.id,
+                  });
+                  if (error) return toast(error.message, true);
+                  toast('削除しました');
+                  await loadPlayers();
+                  router();
+                }}, '削除'),
+              ),
             ))
           ),
     ),
@@ -1108,30 +1128,34 @@ async function renderSettings() {
     h('form', { class: 'rule-form', onsubmit: async (e) => {
       e.preventDefault();
       const f = e.target;
+      const curPin  = f.curpin.value;
       const newName = f.name.value.trim();
       const newPin  = f.pin.value;
       const newPin2 = f.pin2.value;
       if (!newName) return toast('名前を入力してください', true);
+      if (!/^\d{4}$/.test(curPin)) return toast('現在のPINを入力してください', true);
 
-      const upd = {};
-      if (newName !== me.name) {
-        // 重複チェック
-        const dup = state.players.find(p => p.name === newName && p.id !== me.id);
-        if (dup) return toast('同じ名前が既に登録されています', true);
-        upd.name = newName;
-      }
+      let newPinHash = null;
       if (newPin || newPin2) {
-        if (!/^\d{4}$/.test(newPin)) return toast('PINは4桁の数字です', true);
-        if (newPin !== newPin2) return toast('PINが一致しません', true);
-        upd.pin_hash = await window.MJ_AUTH.hashPin(newPin);
+        if (!/^\d{4}$/.test(newPin)) return toast('新しいPINは4桁の数字です', true);
+        if (newPin !== newPin2) return toast('新しいPINが一致しません', true);
+        newPinHash = await hashPin(newPin);
       }
-      if (Object.keys(upd).length === 0) return toast('変更がありません', true);
+      if (newName === me.name && !newPinHash) return toast('変更がありません', true);
 
-      const { error } = await sb.from('players').update(upd).eq('id', me.id);
+      const { error } = await sb.rpc('mj_update_profile', {
+        p_player_id: me.id,
+        p_pin_hash: await hashPin(curPin),
+        p_new_name: newName === me.name ? null : newName,
+        p_new_pin_hash: newPinHash,
+      });
       if (error) return toast(error.message, true);
 
-      // ローカルのログイン情報も更新
-      if (upd.name) window.MJ_AUTH.setCurrentPlayer({ id: me.id, name: upd.name });
+      // ローカルのログイン情報も更新する
+      setCurrentPlayer({
+        id: me.id, name: newName, is_admin: isAdmin(),
+        h: newPinHash || await hashPin(curPin),
+      });
       toast('更新しました');
       await loadPlayers();
       router();
@@ -1139,6 +1163,10 @@ async function renderSettings() {
       h('label', { class: 'field' },
         h('span', {}, '名前'),
         h('input', { name: 'name', value: me.name, required: true, maxlength: '20' }),
+      ),
+      h('label', { class: 'field' },
+        h('span', {}, '現在のPIN（本人確認のため必須）'),
+        h('input', { type: 'password', name: 'curpin', inputmode: 'numeric', pattern: '\\d{4}', maxlength: '4', required: true, placeholder: '****' }),
       ),
       h('p', { class: 'muted small' }, '※ PIN変更したいときだけ下を入力。空のままなら現在のPINが維持されます'),
       h('label', { class: 'field' },
@@ -1182,7 +1210,9 @@ async function renderSettings() {
             rank_pt_1st: +f.rank_pt_1st.value, rank_pt_2nd: +f.rank_pt_2nd.value,
             rank_pt_3rd: +f.rank_pt_3rd.value, rank_pt_4th: +f.rank_pt_4th.value,
           };
-          const { error } = await sb.from('rule_presets').update(upd).eq('id', r.id);
+          const { error } = await sb.rpc('mj_admin_update_rule', {
+            p_admin_id: me.id, p_admin_pin_hash: authHash(), p_rule: upd,
+          });
           if (error) return toast(error.message, true);
           toast('保存しました');
           await loadRule();

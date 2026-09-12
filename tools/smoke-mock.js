@@ -28,6 +28,7 @@ const PLAYERS = [
 const DATA = {
   rule_presets: [RULE],
   players: PLAYERS,
+  players_public: PLAYERS.map(({pin_hash, ...r}) => r),
   sessions: [{ id:'s1', played_on:'2026-09-12', confirmed_at:'2026-09-12T00:00:00Z', closed:false, rule_id:'r1' }],
   availability: PLAYERS.map(p => ({ player_id:p.id, available_on:'2026-09-12' })),
   games: [{ id:'g1', game_no:1, session_id:'s1', entered_by:'p1' }],
@@ -54,4 +55,4 @@ function qb(table){
   }});
   return chain;
 }
-var supabase = { createClient: () => ({ from: qb }) };
+var supabase = { createClient: () => ({ from: qb, rpc: async () => ({ data: [], error: null }) }) };

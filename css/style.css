@@ -208,3 +208,4 @@ th.sorted { color: var(--text); }
 .rank-top li { font-size: 15px; }
 .rule-view td { padding: 6px 8px; }
 .rule-view td.num { text-align: right; }
+.btn-row.inline { display: flex; gap: 6px; margin: 0; }

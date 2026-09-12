@@ -3,7 +3,9 @@
 // PINは SHA-256 でハッシュ化して保存
 // ============================================================
 (function () {
-  const AUTH_KEY = 'mj_auth_v1';
+  // v2: PINハッシュをセッション資格情報として保持する（サーバー側の検証に使う）。
+  // キーを変えているため、更新後は全員が一度ログインし直す必要がある。
+  const AUTH_KEY = 'mj_auth_v2';
 
   async function hashPin(pin) {
     const enc = new TextEncoder();
@@ -27,5 +29,11 @@
     location.reload();
   }
 
-  window.MJ_AUTH = { hashPin, getCurrentPlayer, setCurrentPlayer, logout };
+  // サーバー側のRPCに渡す資格情報
+  function authHash() {
+    const p = getCurrentPlayer();
+    return p ? p.h || null : null;
+  }
+
+  window.MJ_AUTH = { hashPin, getCurrentPlayer, setCurrentPlayer, logout, authHash };
 })();
