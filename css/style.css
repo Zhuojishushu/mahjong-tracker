@@ -166,7 +166,7 @@ table.mini td { padding: 4px 6px; }
 .gi-list { display: flex; flex-direction: column; gap: 8px; }
 .gi-row {
   display: grid;
-  grid-template-columns: 2.6rem minmax(0, 1fr) 5rem auto auto;
+  grid-template-columns: 2.6rem minmax(0, 1fr) 7rem auto auto;
   align-items: center; gap: 8px;
 }
 .gi-rank { font-size: 13px; font-weight: 600; color: var(--accent); }
@@ -183,6 +183,13 @@ table.mini td { padding: 4px 6px; }
 tr.pv-top td { background: rgba(46, 160, 67, 0.12); }
 
 @media (max-width: 480px) {
-  .gi-row { grid-template-columns: 2.4rem minmax(0, 1fr) 4.2rem auto auto; gap: 6px; }
+  .gi-row { grid-template-columns: 2.2rem minmax(0, 1fr) 6.2rem auto auto; gap: 5px; }
   .gi-row .check { font-size: 12px; }
 }
+
+/* 符号切替ボタン（スマホのテンキーにマイナスが無いため） */
+.gi-num { display: flex; align-items: center; gap: 4px; }
+.sign-btn { padding: 6px 9px; font-weight: 700; line-height: 1; flex: none; }
+.gi-num .gi-pt, .gi-num .chip-num { width: 100%; min-width: 0; text-align: right; }
+.chip-cell { justify-content: flex-end; }
+.chip-cell .chip-num { max-width: 5rem; }

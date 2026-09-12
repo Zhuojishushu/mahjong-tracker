@@ -37,6 +37,20 @@ const parseISO = (d) => {
   return new Date(y, m - 1, dd);
 };
 const dayJa = (d) => ['日','月','火','水','木','金','土'][parseISO(d).getDay()];
+// スマホの数字キーパッドにはマイナスキーが無いため、符号は専用ボタンで切り替える。
+// input は type="text" にして「-」だけの途中状態を保持できるようにする。
+const numInput = (attrs = {}) => h('input', { type: 'text', inputmode: 'numeric', ...attrs });
+const cleanNum = (raw) => raw.replace(/[^0-9-]/g, '').replace(/(?!^)-/g, '');
+const signBtn = (input) => {
+  const btn = h('button', { class: 'btn small sign-btn', type: 'button', title: '＋ / − を切り替え' }, '±');
+  btn.addEventListener('click', () => {
+    const v = input.value.trim();
+    input.value = v.startsWith('-') ? v.slice(1) : (v === '' ? '-' : `-${v}`);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.focus();
+  });
+  return btn;
+};
 const fmtDate = (d) => {
   const dt = parseISO(d);
   return `${dt.getMonth()+1}月${dt.getDate()}日(${dayJa(d)})`;
@@ -554,21 +568,20 @@ async function renderSessionDetail(sessionId) {
     const inputs = {};
     for (const p of playersInOrder) {
       const cur = chipMap[p.id] || 0;
-      const input = h('input', {
-        type: 'number', value: cur, step: 1, inputmode: 'numeric',
-        'data-pid': p.id, class: 'chip-num',
-      });
+      const input = numInput({ value: cur, 'data-pid': p.id, class: 'chip-num' });
       inputs[p.id] = input;
       const chipYenOf = (v) => v * rule.ippatsu_pt * rule.yen_per_1000pt;
       const yenSpan = h('span', {}, yen(chipYenOf(cur)));
       input.addEventListener('input', () => {
-        const v = parseInt(input.value, 10) || 0;
+        const cleaned = cleanNum(input.value);
+        if (cleaned !== input.value) input.value = cleaned;
+        const v = parseInt(cleaned, 10) || 0;
         yenSpan.textContent = yen(chipYenOf(v));
         updateSum();
       });
       tbody.append(h('tr', {},
         h('td', {}, p.name),
-        h('td', { class: 'num' }, input),
+        h('td', { class: 'num' }, h('div', { class: 'gi-num chip-cell' }, signBtn(input), input)),
         h('td', { class: `num ${cur > 0 ? 'pos' : (cur < 0 ? 'neg' : '')}` }, yenSpan),
       ));
     }
@@ -789,13 +802,11 @@ async function renderNewGame(sessionId) {
     rowRefs = [];
     st.rows.forEach((r, i) => {
       const rankEl = h('span', { class: 'gi-rank' }, '–');
-      const input = h('input', {
-        type: 'number', step: 1, inputmode: 'numeric', class: 'gi-pt',
-        placeholder: '±', value: r.pt === null ? '' : r.pt,
-      });
+      const input = numInput({ class: 'gi-pt', placeholder: '点数', value: r.pt === null ? '' : r.pt });
       input.addEventListener('input', () => {
-        const v = input.value.trim();
-        r.pt = v === '' ? null : parseInt(v, 10);
+        const cleaned = cleanNum(input.value);
+        if (cleaned !== input.value) input.value = cleaned;
+        r.pt = (cleaned === '' || cleaned === '-') ? null : parseInt(cleaned, 10);
         if (!Number.isFinite(r.pt)) r.pt = null;
         updateView();
       });
@@ -805,7 +816,7 @@ async function renderNewGame(sessionId) {
       rowsBox.append(h('div', { class: 'gi-row' },
         rankEl,
         h('span', { class: 'gi-name' }, r.name),
-        input,
+        h('div', { class: 'gi-num' }, signBtn(input), input),
         h('label', { class: 'check' }, tobiBox, '💥ハコ'),
         h('button', {
           class: 'btn small', type: 'button', disabled: i === 0,
