@@ -8,7 +8,7 @@ const sb = createClient(window.MJ_CONFIG.SUPABASE_URL, window.MJ_CONFIG.SUPABASE
 const { hashPin, getCurrentPlayer, setCurrentPlayer, logout } = window.MJ_AUTH;
 
 // index.html の ?v= と必ず揃えること（キャッシュ対策・不具合報告時の切り分け用）
-const APP_VERSION = '3.1.2';
+const APP_VERSION = '3.2.0';
 
 // ---------- 状態 ----------
 const state = { rule: null, players: [], calMonth: null, calSelected: null };
@@ -542,22 +542,111 @@ async function renderSessionDetail(sessionId) {
 
   const rule = state.rule;
 
-  // Daily チップ取得
+  // Daily の賞（一発チップ・役満）を取得
   const { data: chips } = await sb.from('daily_chips').select('*').eq('session_id', sessionId);
   const chipMap = Object.fromEntries((chips || []).map(c => [c.player_id, c.chip_net]));
+  const { data: yakumans } = await sb.from('yakuman_awards').select('*').eq('session_id', sessionId);
+  const yakuMap = Object.fromEntries((yakumans || []).map(y => [y.player_id, y.yakuman_count]));
+
+  // 役満賞：あがった人が他3人から yakuman_pt ずつ受け取る。
+  // 自分 +yakuman_pt×3×自分の回数、他人の回数ぶん −yakuman_pt。まとめると下の式になる。
+  const yakuTotal = summary.reduce((sum, s) => sum + (yakuMap[s.player_id] || 0), 0);
+  const yakuPtOf = (pid) => rule.yakuman_pt * (4 * (yakuMap[pid] || 0) - yakuTotal);
 
   const settlements = summary.map(s => {
-    const pointYen = s.points * rule.yen_per_1000pt;
-    const chipNet  = chipMap[s.player_id] || 0;
-    const chipYen  = chipNet * rule.ippatsu_pt * rule.yen_per_1000pt;
-    return { ...s, chipNet, chipYen, totalYen: pointYen + chipYen };
+    const chipNet = chipMap[s.player_id] || 0;
+    const chipPt  = chipNet * rule.ippatsu_pt;
+    const yakuCnt = yakuMap[s.player_id] || 0;
+    const yakuPt  = yakuPtOf(s.player_id);
+    const totalPt = s.points + chipPt + yakuPt;
+    return { ...s, chipNet, chipPt, yakuCnt, yakuPt, totalPt, totalYen: totalPt * rule.yen_per_1000pt };
   });
 
-  // チップ入力UI
+  // 役満賞の入力UI（Daily終了時のチェック①）
+  function renderYakumanInput() {
+    const card = h('div', { class: 'card' },
+      h('h3', {}, '① 🀄 役満賞'),
+      h('p', { class: 'muted small' },
+        `この日に役満をあがった回数を入力。ツモ・ロンの区別なし。あがった人が他の3人から各${rule.yakuman_pt}pt（${rule.yakuman_pt * rule.yen_per_1000pt}円）ずつ受け取ります。`),
+    );
+    const tbl = h('table', { class: 'chip-input' },
+      h('thead', {}, h('tr', {},
+        h('th', {}, '名前'),
+        h('th', { class: 'num' }, '役満'),
+        h('th', { class: 'num' }, 'pt増減'),
+        h('th', { class: 'num' }, '円換算'),
+      )),
+    );
+    const tbody = h('tbody', {});
+    const inputs = {};
+    const ptCells = {};
+    const yenCells = {};
+
+    const recalc = () => {
+      const counts = {};
+      let total = 0;
+      for (const pid in inputs) {
+        const v = Math.max(0, parseInt(inputs[pid].value, 10) || 0);
+        counts[pid] = v; total += v;
+      }
+      for (const pid in ptCells) {
+        const pt = rule.yakuman_pt * (4 * counts[pid] - total);
+        ptCells[pid].textContent = pt === 0 ? '0' : signed(pt);
+        ptCells[pid].className = `num ${pt > 0 ? 'pos' : (pt < 0 ? 'neg' : '')}`;
+        yenCells[pid].textContent = yen(pt * rule.yen_per_1000pt);
+        yenCells[pid].className = `num ${pt > 0 ? 'pos' : (pt < 0 ? 'neg' : '')}`;
+      }
+    };
+
+    for (const s of summary) {
+      const pid = s.player_id;
+      const cur = yakuMap[pid] || 0;
+      const input = numInput({ value: cur, class: 'chip-num' });
+      input.addEventListener('input', () => {
+        // 回数なので数字のみ（マイナスは受け付けない）
+        const cleaned = input.value.replace(/[^0-9]/g, '');
+        if (cleaned !== input.value) input.value = cleaned;
+        recalc();
+      });
+      inputs[pid] = input;
+      const ptCell  = h('td', { class: 'num' }, '0');
+      const yenCell = h('td', { class: 'num' }, yen(0));
+      ptCells[pid] = ptCell; yenCells[pid] = yenCell;
+      tbody.append(h('tr', {},
+        h('td', {}, s.name),
+        h('td', { class: 'num' }, h('div', { class: 'gi-num chip-cell' }, input)),
+        ptCell, yenCell,
+      ));
+    }
+    tbl.append(tbody);
+    card.append(tbl);
+    recalc();
+
+    card.append(h('div', { class: 'btn-row' },
+      h('button', {
+        class: 'btn primary', disabled: session.closed,
+        onclick: async () => {
+          const rows = summary.map(s => ({
+            session_id: sessionId, player_id: s.player_id,
+            yakuman_count: Math.max(0, parseInt(inputs[s.player_id].value, 10) || 0),
+            updated_at: new Date().toISOString(),
+          }));
+          const { error } = await sb.from('yakuman_awards').upsert(rows, { onConflict: 'session_id,player_id' });
+          if (error) return toast(error.message, true);
+          toast('役満賞を保存しました');
+          router();
+        },
+      }, '💾 役満賞を保存'),
+    ));
+
+    return card;
+  }
+
+  // チップ入力UI（Daily終了時のチェック②）
   function renderChipInput() {
     const playersInOrder = summary.map(s => ({ id: s.player_id, name: s.name }));
     const card = h('div', { class: 'card' },
-      h('h3', {}, '🎫 一発賞（チップ）精算'),
+      h('h3', {}, '② 🎫 一発賞（チップ）'),
       h('p', { class: 'muted small' }, `最終局終了時の各自のチップ増減を入力。プラス=もらった、マイナス=払った。1枚 = ${rule.ippatsu_pt}pt（${rule.ippatsu_pt * rule.yen_per_1000pt}円）。合計が0になるはずです。`),
     );
     const tbl = h('table', { class: 'chip-input' },
@@ -662,6 +751,7 @@ async function renderSessionDetail(sessionId) {
               h('th', { class: 'num' }, 'pt合計'),
               h('th', { class: 'num' }, '1/2/3/4着'),
               h('th', { class: 'num' }, 'トビ'),
+              h('th', { class: 'num' }, '役満'),
               h('th', { class: 'num' }, 'チップ'),
               h('th', { class: 'num' }, '精算額'),
             )),
@@ -673,15 +763,18 @@ async function renderSessionDetail(sessionId) {
                 h('td', { class: `num ${s.points >= 0 ? 'pos' : 'neg'}` }, ptFmt(s.points)),
                 h('td', { class: 'num small' }, rc),
                 h('td', { class: 'num' }, s.tobi || ''),
+                h('td', { class: `num ${s.yakuCnt ? 'pos' : ''}` }, s.yakuCnt || ''),
                 h('td', { class: `num ${s.chipNet > 0 ? 'pos' : (s.chipNet < 0 ? 'neg' : '')}` }, s.chipNet ? (s.chipNet > 0 ? `+${s.chipNet}` : s.chipNet) : '0'),
                 h('td', { class: `num ${s.totalYen >= 0 ? 'pos' : 'neg'}` }, yen(s.totalYen)),
               );
             })),
           )),
-      h('p', { class: 'muted small' }, `レート: 1,000点 = ${rule.yen_per_1000pt}円 / 一発賞1枚 = ${rule.ippatsu_pt}pt（${rule.ippatsu_pt * rule.yen_per_1000pt}円）`),
+      h('p', { class: 'muted small' }, `レート: 1,000点 = ${rule.yen_per_1000pt}円 / 一発賞1枚 = ${rule.ippatsu_pt}pt（${rule.ippatsu_pt * rule.yen_per_1000pt}円） / 役満賞 = 1人あたり${rule.yakuman_pt}pt（${rule.yakuman_pt * rule.yen_per_1000pt}円）`),
+      h('p', { class: 'muted small' }, '精算額 =（半荘pt ＋ 一発pt ＋ 役満pt）× レート'),
     ),
 
-    // チップ精算入力（参加者が4人いて、ゲームが1つでも記録されている場合）
+    // Daily終了時の入力（①役満賞 → ②一発賞の順）
+    summary.length > 0 && participantIds.has(me.id) && renderYakumanInput(),
     summary.length > 0 && participantIds.has(me.id) && renderChipInput(),
 
     h('div', { class: 'card' },
