@@ -8,7 +8,7 @@ const sb = createClient(window.MJ_CONFIG.SUPABASE_URL, window.MJ_CONFIG.SUPABASE
 const { hashPin, getCurrentPlayer, setCurrentPlayer, logout, authHash } = window.MJ_AUTH;
 
 // index.html の ?v= と必ず揃えること（キャッシュ対策・不具合報告時の切り分け用）
-const APP_VERSION = '3.5.0';
+const APP_VERSION = '3.5.1';
 
 // ---------- 状態 ----------
 const state = { rule: null, players: [], calMonth: null, calSelected: null, rankSeason: null, rankSort: 'total' };
@@ -387,7 +387,7 @@ async function renderHome() {
   return h('div', {},
     h('div', { class: 'card hero' },
       h('h2', {}, `🀄 こんにちは、${me.name}さん`),
-      h('p', { class: 'muted' }, `参加者: ${state.players.length}人 / 自分の参加申込: ${(myAvail || []).length}件`),
+      h('p', { class: 'muted' }, `登録者: ${state.players.length}人 / 自分の参加申込: ${(myAvail || []).length}件`),
       h('div', { class: 'btn-row' },
         h('a', { class: 'btn primary', href: '#calendar' }, '📅 カレンダー'),
         h('a', { class: 'btn', href: '#rankings' }, '🏆 ランキング'),
@@ -595,48 +595,51 @@ async function renderCalendar() {
 }
 
 // ============================================================
-// 画面：参加者一覧
+// 登録者カード（設定画面に埋め込む）
 // ============================================================
+function buildRosterCard() {
+  const me = getCurrentPlayer();
+  return h('div', { class: 'card' },
+    h('h3', {}, `👥 登録者 (${state.players.length}人)`),
+    h('p', { class: 'muted small' }, 'このアプリに登録している人の一覧です。新規登録は各自が「ログイン画面 → 新規登録」から行います。'),
+    isAdmin() && h('p', { class: 'muted small' }, '🔑 管理者として、PINのリセットと削除ができます'),
+    state.players.length === 0
+      ? h('p', { class: 'muted' }, 'まだ誰も登録していません')
+      : h('ul', { class: 'list' },
+          ...state.players.map(p => h('li', { class: 'row-between' },
+            h('span', {}, `${p.name}${p.id === me.id ? ' (あなた)' : ''}${p.is_admin ? ' 🔑' : ''}`),
+            isAdmin() && p.id !== me.id && h('span', { class: 'btn-row inline' },
+              h('button', { class: 'btn small', onclick: async () => {
+                const np = prompt(`${p.name} さんの新しい4桁PINを入力してください`);
+                if (np === null) return;
+                if (!/^\d{4}$/.test(np)) return toast('PINは4桁の数字です', true);
+                const { error } = await sb.rpc('mj_admin_reset_pin', {
+                  p_admin_id: me.id, p_admin_pin_hash: authHash(),
+                  p_target_id: p.id, p_new_pin_hash: await hashPin(np),
+                });
+                if (error) return toast(error.message, true);
+                toast(`${p.name} さんのPINを ${np} にリセットしました`);
+              }}, 'PINリセット'),
+              h('button', { class: 'btn small danger', onclick: async () => {
+                if (!confirm(`${p.name} を削除しますか？\n試合記録がある人は削除できません。`)) return;
+                const { error } = await sb.rpc('mj_admin_delete_player', {
+                  p_admin_id: me.id, p_admin_pin_hash: authHash(), p_target_id: p.id,
+                });
+                if (error) return toast(error.message, true);
+                toast('削除しました');
+                await loadPlayers();
+                router();
+              }}, '削除'),
+            ),
+          ))
+        ),
+  );
+}
+
+// 旧 #players へのリンク用（ナビからは外したが、開いても登録者一覧を表示する）
 async function renderPlayers() {
   await loadPlayers();
-  const me = getCurrentPlayer();
-  return h('div', {},
-    h('div', { class: 'card' },
-      h('h3', {}, `👥 参加者一覧 (${state.players.length}人)`),
-      h('p', { class: 'muted small' }, '※新規追加は各人が「ログイン画面 → 新規登録」から自分で行います'),
-      isAdmin() && h('p', { class: 'muted small' }, '🔑 管理者として、PINのリセットと削除ができます'),
-      state.players.length === 0
-        ? h('p', { class: 'muted' }, '参加者が未登録です')
-        : h('ul', { class: 'list' },
-            ...state.players.map(p => h('li', { class: 'row-between' },
-              h('span', {}, `${p.name}${p.id === me.id ? ' (あなた)' : ''}${p.is_admin ? ' 🔑' : ''}`),
-              isAdmin() && p.id !== me.id && h('span', { class: 'btn-row inline' },
-                h('button', { class: 'btn small', onclick: async () => {
-                  const np = prompt(`${p.name} さんの新しい4桁PINを入力してください`);
-                  if (np === null) return;
-                  if (!/^\d{4}$/.test(np)) return toast('PINは4桁の数字です', true);
-                  const { error } = await sb.rpc('mj_admin_reset_pin', {
-                    p_admin_id: me.id, p_admin_pin_hash: authHash(),
-                    p_target_id: p.id, p_new_pin_hash: await hashPin(np),
-                  });
-                  if (error) return toast(error.message, true);
-                  toast(`${p.name} さんのPINを ${np} にリセットしました`);
-                }}, 'PINリセット'),
-                h('button', { class: 'btn small danger', onclick: async () => {
-                  if (!confirm(`${p.name} を削除しますか？\n試合記録がある人は削除できません。`)) return;
-                  const { error } = await sb.rpc('mj_admin_delete_player', {
-                    p_admin_id: me.id, p_admin_pin_hash: authHash(), p_target_id: p.id,
-                  });
-                  if (error) return toast(error.message, true);
-                  toast('削除しました');
-                  await loadPlayers();
-                  router();
-                }}, '削除'),
-              ),
-            ))
-          ),
-    ),
-  );
+  return h('div', {}, buildRosterCard());
 }
 
 // ============================================================
@@ -1368,7 +1371,7 @@ async function renderSettings() {
   const versionCard = h('p', { class: 'muted small', style: 'text-align:center; margin-top:20px;' },
     `麻雀トラッカー v${APP_VERSION}`);
 
-  return h('div', {}, profileCard, ruleCard, versionCard);
+  return h('div', {}, profileCard, buildRosterCard(), ruleCard, versionCard);
 }
 function labelInput(label, name, value) {
   return h('label', { class: 'field' },

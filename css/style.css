@@ -225,5 +225,4 @@ th.sorted { color: var(--text); }
 .post-input { flex: 1; min-width: 0; resize: vertical; font-family: inherit; font-size: 14px; }
 .post-form .btn { flex: none; }
 @media (max-width: 480px) {
-  .nav a { font-size: 10px; }
 }
