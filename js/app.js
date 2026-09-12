@@ -8,7 +8,7 @@ const sb = createClient(window.MJ_CONFIG.SUPABASE_URL, window.MJ_CONFIG.SUPABASE
 const { hashPin, getCurrentPlayer, setCurrentPlayer, logout, authHash } = window.MJ_AUTH;
 
 // index.html の ?v= と必ず揃えること（キャッシュ対策・不具合報告時の切り分け用）
-const APP_VERSION = '3.6.3';
+const APP_VERSION = '3.6.4';
 
 // ---------- 状態 ----------
 const state = { rule: null, players: [], calMonth: null, calSelected: null, rankSeason: null, rankSort: 'total' };
