@@ -48,7 +48,8 @@ mahjong-tracker/
 │   ├── auth.js          # PIN認証（IIFE）
 │   └── app.js           # 本体（SPA・全画面・スコア計算）
 ├── tools/
-│   └── smoke.sh         # 全画面の描画スモークテスト（デプロイ前に実行）
+│   ├── smoke.sh         # 全画面の描画スモークテスト（デプロイ前に実行）
+│   └── rpc-check.py     # サーバー側処理の検査（スキーマ変更時に必ず実行）
 ├── supabase/
 │   ├── schema.sql       # 初回スキーマ
 │   ├── schema_v2.sql    # PINログイン・カレンダー（Phase 2a）
@@ -59,6 +60,7 @@ mahjong-tracker/
 │   ├── schema_v7.sql    # Phase 3.4（PIN照合のサーバー側移行・権限）
 │   ├── schema_v8.sql    # Phase 3.5（掲示板）
 │   ├── schema_v9.sql    # Phase 3.6（通知の購読）
+│   ├── schema_v10.sql   # 新規登録の曖昧参照エラー修正
 │   ├── schema_all.sql   # 再構築用（v1→v3を結合）
 │   └── functions/notify-session/index.ts   # 成立通知のEdge Function
 ├── manifest.json        # PWA（ホーム画面に追加）
@@ -79,7 +81,7 @@ mahjong-tracker/
 - ✅ **Phase 3.5**: 掲示板（全体用＋卓成立4人専用）
 - ✅ **Phase 3.6**: スマホ通知（LINEではなくWeb Push。PWA＋Edge Function）
 
-**全フェーズ完了。残るはテストデータの片付けとトライアル配布。**
+**全フェーズ完了。2026-09-15 にメンバーへ配布し、運用中。**
 
 ## 通知（Web Push）
 - LINEは使わない。LINE Notifyが2025-03に終了しており、Messaging APIだと
@@ -111,7 +113,7 @@ mahjong-tracker/
 ## 運営者
 - 麻雀アプリの運営者は **テンマ** さん（=このGitHubアカウントの所有者・Zhuojishushu）
 - 仲間内（10名程度）に向けて配布予定
-- 全機能の実装が完了（2026-09-12）。トライアル配布の準備段階
+- 全機能の実装が完了（2026-09-12）、2026-09-15 にメンバーへ配布し運用開始
 
 ## 開発上の注意
 - **既存ファイルを編集する際は必ず Read してから Edit**
@@ -123,8 +125,14 @@ mahjong-tracker/
 - **JS/CSSのキャッシュ対策は `index.html` が読み込み時刻を付けて動的に読む方式**
   （GitHub Pages は index.html に max-age=600 を付けるため、`?v=` の書き換えだけでは
   古いHTMLが古いJSを読み続けてしまう。この方式なら index.html が10分古くても常に最新のJSが入る）
-- **デプロイ前に `./tools/smoke.sh` を実行する**（全画面の描画を実際に走らせて実行時エラーを検出。
-  構文チェックだけでは関数内の未定義変数などを拾えず、実際に本番へ出してしまった事故がある）
+- **デプロイ前に検査を2つとも通す**
+  - `./tools/smoke.sh` … 全画面の描画を実際に走らせて実行時エラーを検出。
+    構文チェックだけでは関数内の未定義変数などを拾えず、本番へ出してしまった事故がある
+  - `./tools/rpc-check.py` … 本番のサーバー処理（RPC・RLS・Edge Function）を実際に叩いて確認。
+    smoke.sh はSupabaseの応答を模擬しているためSQLの書き間違いを検出できない。
+    新規登録が `column reference "name" is ambiguous` で全員失敗したまま配布した事故がある。
+    既定ではデータを作らない。`--admin-pin 1234` をつけると登録の成功経路まで確認し後片付けもする
+- **スキーマを変更したら必ず `./tools/rpc-check.py` を実行する**
 - **リリースのたびに `js/app.js` の `APP_VERSION` を上げる**（設定画面の最下部に表示され、
   利用者に「設定画面のバージョンは？」と聞くだけで切り分けができる）
 - Supabase無料プランは1週間未使用で自動停止する。cron-job.org で6時間おきにキープアライブ中。
